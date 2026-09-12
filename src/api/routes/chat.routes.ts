@@ -2,14 +2,26 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { requireAdminAuth } from "../middleware/auth.middleware.js";
 import { AuthService } from "../../auth/auth.service.js";
-import { conversationService, ConversationService } from "../../context/conversation.service.js";
+import {
+  conversationService,
+  ConversationService,
+} from "../../context/conversation.service.js";
 import { agentService, AgentService } from "../../ai/agent.service.js";
-import { uuidSchema, validateInput } from "../../guardrails/input-validation.js";
+import {
+  actionConfirmationService,
+  ActionConfirmationService,
+} from "../../actions/action-confirmation.service.js";
+import {
+  uuidSchema,
+  validateInput,
+} from "../../guardrails/input-validation.js";
+import { ActionForbiddenError, ActionNotFoundError } from "../../domain/errors.js";
 
 export interface ChatRoutesOptions {
   authService?: AuthService;
   conversationService?: ConversationService;
   agentService?: AgentService;
+  actionConfirmationService?: ActionConfirmationService;
 }
 
 const sendMessageBodySchema = z
@@ -17,6 +29,13 @@ const sendMessageBodySchema = z
     message: z.string().trim().min(1, "Message must not be empty"),
   })
   .strict();
+
+const cancelActionBodySchema = z
+  .object({
+    reason: z.string().trim().optional(),
+  })
+  .strict()
+  .optional();
 
 const messagesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -30,6 +49,8 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
   const authMiddleware = requireAdminAuth(opts.authService);
   const convService = opts.conversationService || conversationService;
   const aiService = opts.agentService || agentService;
+  const actionService =
+    opts.actionConfirmationService || actionConfirmationService;
 
   // 1. Create new session
   fastify.post(
@@ -166,6 +187,129 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
               current_worker_label: result.state.currentWorkerLabel,
             }
           : null,
+      });
+    },
+  );
+
+  // 6. Get active pending action for a session
+  fastify.get<{ Params: { sessionId: string } }>(
+    "/v1/chat/sessions/:sessionId/action/pending",
+    { preHandler: authMiddleware },
+    async (request, reply) => {
+      const actor = request.actor!;
+      const sessionId = validateInput(uuidSchema, request.params.sessionId);
+
+      await convService.verifySessionAccess(sessionId, actor.userId);
+      const action =
+        await actionService.getActivePendingActionForSession(sessionId);
+
+      if (!action) {
+        return reply.status(200).send({ pending_action: null });
+      }
+
+      return reply.status(200).send({
+        pending_action: {
+          id: action.id,
+          session_id: action.sessionId,
+          action_type: action.actionType,
+          status: action.status,
+          display_summary: action.displaySummary,
+          expires_at: action.expiresAt.toISOString(),
+          created_at: action.createdAt.toISOString(),
+        },
+      });
+    },
+  );
+
+  // 7. Get action details by action ID
+  fastify.get<{ Params: { actionId: string } }>(
+    "/v1/chat/actions/:actionId",
+    { preHandler: authMiddleware },
+    async (request, reply) => {
+      const actor = request.actor!;
+      const actionId = validateInput(uuidSchema, request.params.actionId);
+
+      const action = await actionService.getPendingAction(actionId);
+      if (!action) {
+        throw new ActionNotFoundError(actionId);
+      }
+      if (action.userId !== actor.userId) {
+        throw new ActionForbiddenError(actionId);
+      }
+
+      return reply.status(200).send({
+        action: {
+          id: action.id,
+          session_id: action.sessionId,
+          action_type: action.actionType,
+          status: action.status,
+          arguments: action.arguments,
+          display_summary: action.displaySummary,
+          created_at: action.createdAt.toISOString(),
+          expires_at: action.expiresAt.toISOString(),
+          confirmed_at: action.confirmedAt?.toISOString() ?? null,
+          cancelled_at: action.cancelledAt?.toISOString() ?? null,
+          executed_at: action.executedAt?.toISOString() ?? null,
+          result_summary: action.resultSummary ?? null,
+          execution_error_code: action.executionErrorCode ?? null,
+        },
+      });
+    },
+  );
+
+  // 8. Confirm and execute a pending action
+  fastify.post<{ Params: { actionId: string } }>(
+    "/v1/chat/actions/:actionId/confirm",
+    { preHandler: authMiddleware },
+    async (request, reply) => {
+      const actor = request.actor!;
+      const gateway = request.gateway!;
+      const actionId = validateInput(uuidSchema, request.params.actionId);
+
+      const result = await actionService.confirmAction({
+        actionId,
+        userId: actor.userId,
+        gateway,
+        requestId: request.requestId,
+      });
+
+      return reply.status(200).send({
+        action_id: result.actionId,
+        session_id: result.sessionId,
+        action_type: result.actionType,
+        status: result.status,
+        display_summary: result.displaySummary,
+        result_summary: result.resultSummary,
+        message: result.message,
+      });
+    },
+  );
+
+  // 9. Cancel a pending action
+  fastify.post<{ Params: { actionId: string } }>(
+    "/v1/chat/actions/:actionId/cancel",
+    { preHandler: authMiddleware },
+    async (request, reply) => {
+      const actor = request.actor!;
+      const actionId = validateInput(uuidSchema, request.params.actionId);
+      const body = validateInput(
+        cancelActionBodySchema,
+        request.body,
+      );
+
+      const result = await actionService.cancelAction({
+        actionId,
+        userId: actor.userId,
+        reason: body?.reason,
+      });
+
+      return reply.status(200).send({
+        action_id: result.actionId,
+        session_id: result.sessionId,
+        action_type: result.actionType,
+        status: result.status,
+        display_summary: result.displaySummary,
+        message: result.message,
       });
     },
   );

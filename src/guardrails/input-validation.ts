@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { InvalidInputError } from "../domain/errors.js";
+import { resolveRelativeDatePhrase } from "../shared/business-time.js";
 
 export const uuidSchema = z
   .string()
@@ -7,11 +8,18 @@ export const uuidSchema = z
 
 export const dateStringSchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, {
-    message: "Date must be formatted as YYYY-MM-DD.",
-  })
-  .refine((val) => !Number.isNaN(Date.parse(val)), {
-    message: "Invalid calendar date.",
+  .trim()
+  .transform((val, ctx) => {
+    const resolved = resolveRelativeDatePhrase(val);
+    if (!resolved) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Date must be formatted as YYYY-MM-DD or a relative date phrase (today, tomorrow, yesterday, this morning, tonight).",
+      });
+      return z.NEVER;
+    }
+    return resolved;
   });
 
 /**

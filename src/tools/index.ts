@@ -7,3 +7,4 @@ export * from "./reads/search-workers.tool.js";
 export * from "./reads/get-worker-details.tool.js";
 export * from "./reads/get-worker-history.tool.js";
 export * from "./reads/get-event-report.tool.js";
+export * from "./writes/index.js";

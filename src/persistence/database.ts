@@ -11,7 +11,7 @@ export function getPool(): Pool | null {
 
   try {
     const config = getConfig();
-    if (!config?.DATABASE_URL) {
+    if (config?.CHAT_PERSISTENCE_MODE === "memory" || !config?.DATABASE_URL) {
       return null;
     }
 

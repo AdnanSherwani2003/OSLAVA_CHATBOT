@@ -5,11 +5,14 @@ import { entityContextService } from "../context/entity-context.service.js";
 import { reduceSessionState } from "../context/context.reducer.js";
 import { ITraceRepository } from "../persistence/repositories/trace.repository.js";
 import { logger } from "../observability/logger.js";
+import { metrics } from "../observability/metrics.js";
 import {
   ModelMessage,
   ModelProvider,
 } from "./model.provider.js";
 import { toolRegistry } from "./tool-registry.js";
+import { PendingActionRecord } from "../actions/action.types.js";
+import { WriteIntentResult } from "../tools/tool.types.js";
 
 export interface ToolLoopExecutionParams {
   modelProvider: ModelProvider;
@@ -32,6 +35,7 @@ export interface ToolLoopResult {
   inputTokens?: number;
   outputTokens?: number;
   model: string;
+  proposedAction?: PendingActionRecord;
 }
 
 export class ToolLoop {
@@ -63,11 +67,13 @@ export class ToolLoop {
     const toolDefinitions = toolRegistry.getToolDefinitions();
 
     while (toolCallCount < this.maxToolCalls) {
+      const modelCallStart = Date.now();
       const response = await modelProvider.chat({
         messages,
         tools: toolDefinitions,
         toolChoice: "auto",
       });
+      metrics.recordModelCall(Date.now() - modelCallStart);
 
       lastModel = response.model;
       if (response.usage) {
@@ -125,8 +131,8 @@ export class ToolLoop {
           continue;
         }
 
-        // 1. Check known write tools
-        if (toolRegistry.isKnownWriteTool(toolName)) {
+        // 1. Check unsupported write tools
+        if (toolRegistry.isUnsupportedWriteTool(toolName)) {
           logger.warn(
             { requestId, toolName },
             "[ToolLoop] Intercepted unsupported write tool call",
@@ -137,7 +143,7 @@ export class ToolLoop {
             name: toolName,
             content: JSON.stringify({
               error:
-                "Write operations are disabled. That action isn't available through the chatbot yet.",
+                "That action isn't available through the chatbot yet.",
             }),
           });
           continue;
@@ -160,7 +166,11 @@ export class ToolLoop {
 
         // 3. Hallucination / Entity reference guard
         if (
-          (toolName === "get_event_details" || toolName === "get_event_report") &&
+          (toolName === "get_event_details" ||
+            toolName === "get_event_report" ||
+            toolName === "publish_event" ||
+            toolName === "complete_event" ||
+            toolName === "close_event") &&
           parsedArgs.event_id
         ) {
           const isValid = entityContextService.validateEntityReference(
@@ -189,7 +199,8 @@ export class ToolLoop {
 
         if (
           (toolName === "get_worker_details" ||
-            toolName === "get_worker_history") &&
+            toolName === "get_worker_history" ||
+            toolName === "change_worker_category") &&
           parsedArgs.worker_id
         ) {
           const isValid = entityContextService.validateEntityReference(
@@ -224,7 +235,7 @@ export class ToolLoop {
 
         try {
           const result = await tool.execute(
-            { gateway, actor, requestId },
+            { gateway, actor, requestId, sessionId },
             parsedArgs,
           );
           toolOutput = result;
@@ -232,7 +243,48 @@ export class ToolLoop {
             executionStatus = "ERROR";
             errorCode = result.error?.code || "TOOL_ERROR";
           } else {
-            // Update session state
+            // Write Intent Handling: Halt tool loop immediately!
+            if (toolRegistry.isWriteIntentTool(toolName)) {
+              const writeResult = result.data as WriteIntentResult;
+              const endTime = new Date();
+              const durationMs = endTime.getTime() - startTime.getTime();
+
+              await traceRepo.recordToolExecution({
+                requestId,
+                sessionId,
+                userId: actor.userId,
+                toolName,
+                argumentsRedacted: parsedArgs,
+                status: "SUCCESS",
+                startedAt: startTime,
+                completedAt: endTime,
+                durationMs,
+                errorCode: null,
+              });
+
+              logger.info(
+                {
+                  requestId,
+                  sessionId,
+                  actionId: writeResult.action.id,
+                  actionType: writeResult.action.actionType,
+                },
+                "[ToolLoop] Write intent proposed; halting tool loop for explicit admin confirmation",
+              );
+
+              return {
+                finalContent: "",
+                state: currentState,
+                toolCallCount,
+                totalTokens: totalPromptTokens + totalCompletionTokens,
+                inputTokens: totalPromptTokens,
+                outputTokens: totalCompletionTokens,
+                model: lastModel,
+                proposedAction: writeResult.action,
+              };
+            }
+
+            // Update session state for read queries
             currentState = reduceSessionState(
               currentState,
               sessionId,
@@ -256,6 +308,11 @@ export class ToolLoop {
 
         const endTime = new Date();
         const durationMs = endTime.getTime() - startTime.getTime();
+        metrics.recordToolInvocation(
+          toolName,
+          durationMs,
+          executionStatus === "SUCCESS",
+        );
 
         // Record trace (arguments redacted)
         await traceRepo.recordToolExecution({

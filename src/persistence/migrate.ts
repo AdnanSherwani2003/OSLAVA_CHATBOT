@@ -10,8 +10,19 @@ const __dirname = path.dirname(__filename);
 
 export async function runMigrations(): Promise<void> {
   const config = getConfig();
+
+  if (config.CHAT_PERSISTENCE_MODE === "memory") {
+    const msg =
+      "Chat persistence mode is memory; database migrations are not required.";
+    logger.info(`[Migration] ${msg}`);
+    console.log(msg);
+    return;
+  }
+
   if (!config.DATABASE_URL) {
-    throw new Error("DATABASE_URL is not set in environment");
+    throw new Error(
+      "DATABASE_URL is required to run migrations when CHAT_PERSISTENCE_MODE is 'postgres'.",
+    );
   }
 
   const client = new Client({ connectionString: config.DATABASE_URL });

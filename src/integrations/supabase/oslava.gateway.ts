@@ -295,4 +295,89 @@ export class OslavaGateway {
       throw mapSupabaseError(err);
     }
   }
+
+  /**
+   * Phase 4: Promotes or demotes a worker by exactly one category step.
+   * Requires confirming admin authorization and mandatory operational reason.
+   */
+  public async changeWorkerCategory(params: {
+    workerId: string;
+    newCategory: import("../../domain/auth.types.js").WorkerCategory;
+    reason: string;
+    notes?: string;
+  }): Promise<{ worker_id: string; old_category: string; new_category: string }> {
+    try {
+      const { data, error } = await this.client.rpc("change_worker_category", {
+        p_worker_id: params.workerId,
+        p_new_category: params.newCategory,
+        p_reason: params.reason,
+        p_notes: params.notes || null,
+      });
+      if (error) throw mapSupabaseError(error);
+
+      const row = Array.isArray(data) ? data[0] : data;
+      return {
+        worker_id: row?.worker_id || params.workerId,
+        old_category: row?.old_category,
+        new_category: row?.new_category || params.newCategory,
+      };
+    } catch (err) {
+      throw mapSupabaseError(err);
+    }
+  }
+
+  /**
+   * Phase 4: Publishes a draft event and initializes tier release schedules.
+   */
+  public async publishEvent(params: {
+    eventId: string;
+    reason: string;
+  }): Promise<void> {
+    try {
+      const { error } = await this.client.rpc("publish_event", {
+        p_event_id: params.eventId,
+        p_reason: params.reason,
+      });
+      if (error) throw mapSupabaseError(error);
+    } catch (err) {
+      throw mapSupabaseError(err);
+    }
+  }
+
+  /**
+   * Phase 4: Marks an in-progress event as completed.
+   */
+  public async completeEvent(params: {
+    eventId: string;
+    reason: string;
+  }): Promise<void> {
+    try {
+      const { error } = await this.client.rpc("complete_event", {
+        p_event_id: params.eventId,
+        p_reason: params.reason,
+      });
+      if (error) throw mapSupabaseError(error);
+    } catch (err) {
+      throw mapSupabaseError(err);
+    }
+  }
+
+  /**
+   * Phase 4: Closes a completed event.
+   */
+  public async closeEvent(params: {
+    eventId: string;
+    reason: string;
+  }): Promise<void> {
+    try {
+      const { error } = await this.client.rpc("close_event", {
+        p_event_id: params.eventId,
+        p_reason: params.reason,
+      });
+      if (error) throw mapSupabaseError(error);
+    } catch (err) {
+      throw mapSupabaseError(err);
+    }
+  }
 }
+

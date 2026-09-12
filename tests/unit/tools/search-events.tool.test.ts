@@ -3,6 +3,10 @@ import { SearchEventsTool } from "../../../src/tools/reads/search-events.tool.js
 import type { ToolExecutionContext } from "../../../src/tools/tool.types.js";
 import type { OslavaGateway } from "../../../src/integrations/supabase/oslava.gateway.js";
 import type { EventSummaryDto } from "../../../src/domain/event.types.js";
+import {
+  resolveTodayDate,
+  resolveTomorrowDate,
+} from "../../../src/shared/business-time.js";
 
 describe("SearchEventsTool", () => {
   const tool = new SearchEventsTool();
@@ -164,5 +168,51 @@ describe("SearchEventsTool", () => {
         limit: 30,
       }),
     ).rejects.toThrowError(/Validation failed/);
+  });
+
+  it("resolves relative date phrases ('today', 'tomorrow') using Asia/Kolkata business dates", async () => {
+    const today = resolveTodayDate();
+    const tomorrow = resolveTomorrowDate();
+
+    const dateMockEvents: EventSummaryDto[] = [
+      {
+        ...mockEvents[0],
+        id: "evt-today",
+        title: "Today Event",
+        event_date: today,
+        reporting_at: `${today}T10:00:00Z`,
+      },
+      {
+        ...mockEvents[1],
+        id: "evt-tomorrow",
+        title: "Tomorrow Event",
+        event_date: tomorrow,
+        reporting_at: `${tomorrow}T10:00:00Z`,
+      },
+    ];
+
+    const context = createMockContext(dateMockEvents);
+
+    // Filter "today"
+    const resultToday = await tool.execute(context, {
+      start_date: "today",
+      end_date: "today",
+    });
+    expect(resultToday.success).toBe(true);
+    if (resultToday.success) {
+      expect(resultToday.data).toHaveLength(1);
+      expect(resultToday.data[0]?.id).toBe("evt-today");
+    }
+
+    // Filter "tomorrow"
+    const resultTomorrow = await tool.execute(context, {
+      start_date: "tomorrow",
+      end_date: "tomorrow",
+    });
+    expect(resultTomorrow.success).toBe(true);
+    if (resultTomorrow.success) {
+      expect(resultTomorrow.data).toHaveLength(1);
+      expect(resultTomorrow.data[0]?.id).toBe("evt-tomorrow");
+    }
   });
 });

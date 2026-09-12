@@ -12,7 +12,8 @@ A standalone, production-ready backend service designed to power the Oslava Admi
 - **Phase 1: Foundation → Authentication → Supabase Integration Gateway** — **COMPLETE**
 - **Phase 2: 7 Read Capabilities & PII Sanitization** — **COMPLETE**
 - **Phase 3: AI Agent, Groq GPT-OSS 120B, Tool Calling & Chat Persistence** — **COMPLETE**
-- **Phase 4: Write Tools & Confirmation Pipeline** — *Planned*
+- **Phase 4: Confirmation Engine, 4 Safe Write Intents & CLI Testing** — **COMPLETE**
+- **Phase 5: Production Hardening & Admin Observability Metrics** — *Planned*
 
 ---
 
@@ -42,22 +43,82 @@ A standalone, production-ready backend service designed to power the Oslava Admi
 - Resolves natural language references (e.g. "first one", "second one", "his history", "its report").
 - Rejects ungrounded UUIDs before database execution.
 
-### 4. Dedicated Chat Persistence & Tracing (PostgreSQL)
-- Schema migrations in `src/persistence/migrations/` managed via `npm run db:migrate`.
-- Stores sessions, message histories, session state, redacted tool executions, and performance traces.
-- Seamless in-memory fallback for fast, self-contained unit/integration tests.
+### 4. Dual-Mode Persistence Architecture
+- **`memory` mode (Default for dev & test)**:
+  - Zero external database required.
+  - No PostgreSQL, no Docker, no `DATABASE_URL`.
+  - Sessions, message histories, active entity context, and traces live in an application-scoped in-memory store.
+  - Server starts instantly with `npm run dev`.
+  - `npm run db:migrate` safely skips without error.
+- **`postgres` mode (Production & Staging)**:
+  - Dedicated PostgreSQL database.
+  - Requires `DATABASE_URL` and running PostgreSQL instance.
+  - Run schema migrations via `npm run db:migrate`.
+  - Automatic connection pool management via `pg`.
 
 ---
 
-## Chat API Endpoints (Phase 3)
+## Phase 4 Confirmation Engine & Safe Write Intents
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/v1/chat/sessions` | Creates a new chat session for the caller |
-| `GET` | `/v1/chat/sessions` | Lists chat sessions for the authenticated admin |
-| `GET` | `/v1/chat/sessions/:sessionId` | Gets session details and active entity state |
-| `GET` | `/v1/chat/sessions/:sessionId/messages` | Retrieves message history with pagination |
-| `POST` | `/v1/chat/sessions/:sessionId/messages` | Sends user message and executes AI agent turn |
+Phase 4 implements audited, safe administrative mutations:
+1. **Model Write Intents Only**: LLM cannot directly execute mutations or access `ActionExecutionService`.
+2. **4 Supported Write Intents**:
+   - `change_worker_category` (1-step promotion/demotion: F <-> C <-> B <-> A)
+   - `publish_event` (DRAFT -> PUBLISHED / UPCOMING)
+   - `complete_event` (IN_PROGRESS -> COMPLETED)
+   - `close_event` (COMPLETED -> CLOSED)
+3. **Mandatory Operational Reason**: Min 3 characters required. Model is strictly instructed never to fabricate generic reasons.
+4. **Immediate Tool-Loop Halt**: Proposing a write action halts the agent loop immediately and returns a deterministic `confirmation_required` response.
+5. **Atomic Claiming & Stale-State Detection**: Idempotent duplicate-click protection and pre-execution DB version checking.
+6. **Dedicated Confirmation API**:
+   - `POST /v1/chat/actions/:actionId/confirm`
+   - `POST /v1/chat/actions/:actionId/cancel`
+   - `GET /v1/chat/sessions/:sessionId/action/pending`
+   - `GET /v1/chat/actions/:actionId`
+7. **Interactive CLI Testing**:
+   - Run `npm run chat`
+   - Commands: `/pending`, `/confirm`, `/cancel`, `/state`, `/reset`, `/help`, `/exit`.
+
+---
+
+## Running the Service
+
+### Mode 1: Local Logic Test Mode (Zero DB Setup)
+Ideal for testing chatbot conversation logic, Groq agent tool calls, and frontend integration without launching Docker or PostgreSQL:
+
+1. Configure `.env`:
+```env
+NODE_ENV=development
+CHAT_PERSISTENCE_MODE=memory
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_PUBLISHABLE_KEY=your-key
+GROQ_API_KEY=gsk_your_key_here
+```
+*(No `DATABASE_URL` needed)*
+
+2. Start the development server:
+```bash
+npm run dev
+```
+
+### Mode 2: Production / Staging Mode (PostgreSQL Persistence)
+
+1. Configure `.env`:
+```env
+NODE_ENV=production
+CHAT_PERSISTENCE_MODE=postgres
+DATABASE_URL=postgresql://user:password@localhost:5432/oslava_chatbot
+```
+
+2. Run database migrations:
+```bash
+npm run db:migrate
+```
+
+3. Start server:
+```bash
+npm start
+```
 
 ---
 
@@ -74,9 +135,18 @@ cp .env.example .env
 | `NODE_ENV` | No | `development` | Environment mode (`development`, `test`, `production`) |
 | `PORT` | No | `3000` | HTTP port |
 | `HOST` | No | `0.0.0.0` | Bind host |
+| `CHAT_PERSISTENCE_MODE` | No | `memory` (dev/test), `postgres` (prod) | Persistence engine (`memory` or `postgres`) |
+| `DATABASE_URL` | If `postgres` mode | - | PostgreSQL connection URL |
 | `SUPABASE_URL` | **Yes** | - | URL of the Oslava Supabase project |
 | `SUPABASE_PUBLISHABLE_KEY` | **Yes** | - | Supabase publishable/anon public key |
 | `SUPABASE_ANON_KEY` | Optional | - | Accepted fallback if your project uses anon key naming |
+| `GROQ_API_KEY` | No (for unit tests) | - | Groq Cloud API key for live AI agent |
+| `GROQ_MODEL` | No | `openai/gpt-oss-120b` | Groq model identifier |
+| `GROQ_REASONING_EFFORT`| No | `medium` | Reasoning effort (`low`, `medium`, `high`) |
+| `GROQ_MAX_OUTPUT_TOKENS`| No | `2000` | Token limit for model output |
+| `GROQ_TIMEOUT_MS` | No | `30000` | Groq HTTP timeout in ms |
+| `CHAT_HISTORY_MESSAGE_LIMIT`| No | `16` | Message history window passed to LLM |
+| `ACTION_CONFIRMATION_TTL_SECONDS`| No | `600` | TTL window in seconds for pending action confirmations |
 | `LOG_LEVEL` | No | `info` | Pino log level (`trace`, `debug`, `info`, `warn`, `error`) |
 | `CORS_ORIGINS` | No | `*` | Allowed CORS origins (comma-separated or `*`) |
 | `REQUEST_TIMEOUT_MS` | No | `15000` | Request timeout in milliseconds |
@@ -86,18 +156,10 @@ cp .env.example .env
 
 ---
 
-## Installation & Running
+## Testing & Quality Assurance
 
-### Prerequisites
-- Node.js >= 20.x (Node 24 tested)
-- npm >= 10.x
-
-### Install Dependencies
-```bash
-npm install
-```
-
-### Run Tests
+### Run Self-Contained Tests
+Runs 198 unit and integration tests completely offline without external databases or network calls:
 ```bash
 npm test
 ```
@@ -106,11 +168,6 @@ npm test
 ```bash
 npm run typecheck
 npm run build
-```
-
-### Start Development Server
-```bash
-npm run dev
 ```
 
 ### Start Production Server

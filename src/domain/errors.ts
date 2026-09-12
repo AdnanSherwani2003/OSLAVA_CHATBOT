@@ -13,6 +13,14 @@ export type ErrorCode =
   | "TOOL_LIMIT_EXCEEDED"
   | "SESSION_NOT_FOUND"
   | "SESSION_FORBIDDEN"
+  | "ACTION_NOT_FOUND"
+  | "ACTION_FORBIDDEN"
+  | "ACTION_EXPIRED"
+  | "ACTION_ALREADY_RESOLVED"
+  | "ACTION_STALE"
+  | "ACTION_EXECUTION_FAILED"
+  | "ACTION_OUTCOME_UNKNOWN"
+  | "PENDING_ACTION_EXISTS"
   | "SUPABASE_UNAVAILABLE"
   | "INTERNAL_ERROR";
 
@@ -190,8 +198,12 @@ export class SessionNotFoundError extends AppError {
   public readonly statusCode = 404;
   public readonly retryable = false;
 
-  constructor(message = "Chat session was not found.") {
-    super(message);
+  constructor(sessionId?: string) {
+    super(
+      sessionId
+        ? `Chat session '${sessionId}' was not found.`
+        : "Chat session was not found.",
+    );
   }
 }
 
@@ -200,8 +212,12 @@ export class SessionForbiddenError extends AppError {
   public readonly statusCode = 403;
   public readonly retryable = false;
 
-  constructor(message = "Access to this chat session is forbidden.") {
-    super(message);
+  constructor(sessionId?: string) {
+    super(
+      sessionId
+        ? `Access to chat session '${sessionId}' is forbidden.`
+        : "Access to this chat session is forbidden.",
+    );
   }
 }
 
@@ -214,3 +230,86 @@ export class InternalError extends AppError {
     super(message);
   }
 }
+
+export class ActionNotFoundError extends AppError {
+  public readonly code = "ACTION_NOT_FOUND";
+  public readonly statusCode = 404;
+  public readonly retryable = false;
+
+  constructor(actionId: string) {
+    super(`Action '${actionId}' was not found.`);
+  }
+}
+
+export class ActionForbiddenError extends AppError {
+  public readonly code = "ACTION_FORBIDDEN";
+  public readonly statusCode = 403;
+  public readonly retryable = false;
+
+  constructor(actionId: string) {
+    super(`You are not authorized to confirm or cancel action '${actionId}'.`);
+  }
+}
+
+export class ActionExpiredError extends AppError {
+  public readonly code = "ACTION_EXPIRED";
+  public readonly statusCode = 400;
+  public readonly retryable = false;
+
+  constructor(actionId: string) {
+    super(`Action '${actionId}' has expired and cannot be executed.`);
+  }
+}
+
+export class ActionAlreadyResolvedError extends AppError {
+  public readonly code = "ACTION_ALREADY_RESOLVED";
+  public readonly statusCode = 409;
+  public readonly retryable = false;
+
+  constructor(actionId: string, status: string) {
+    super(`Action '${actionId}' is already resolved with status '${status}'.`);
+  }
+}
+
+export class ActionStaleError extends AppError {
+  public readonly code = "ACTION_STALE";
+  public readonly statusCode = 409;
+  public readonly retryable = false;
+
+  constructor(message = "Action cannot be executed because underlying entity state has changed.") {
+    super(message);
+  }
+}
+
+export class ActionExecutionFailedError extends AppError {
+  public readonly code = "ACTION_EXECUTION_FAILED";
+  public readonly statusCode = 500;
+  public readonly retryable = false;
+
+  constructor(message = "Execution of the requested action failed.") {
+    super(message);
+  }
+}
+
+export class ActionOutcomeUnknownError extends AppError {
+  public readonly code = "ACTION_OUTCOME_UNKNOWN";
+  public readonly statusCode = 500;
+  public readonly retryable = false;
+
+  constructor(message = "Mutation outcome is unknown. Manual verification required.") {
+    super(message);
+  }
+}
+
+export class PendingActionExistsError extends AppError {
+  public readonly code = "PENDING_ACTION_EXISTS";
+  public readonly statusCode = 409;
+  public readonly retryable = false;
+
+  constructor(
+    message = "You already have an action waiting for confirmation. Confirm or cancel it before requesting another change.",
+  ) {
+    super(message);
+  }
+}
+

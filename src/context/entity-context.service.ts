@@ -131,7 +131,9 @@ export class EntityContextService {
     };
 
     for (const [key, idx] of Object.entries(ordinals)) {
-      if (norm.includes(key) && idx < recentResults.length) {
+      const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`(?:^|\\b|#)${escaped}(?:\\b|$)`, "i");
+      if (regex.test(norm) && idx < recentResults.length) {
         return recentResults[idx];
       }
     }

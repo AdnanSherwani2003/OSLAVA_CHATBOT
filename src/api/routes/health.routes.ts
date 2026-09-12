@@ -1,5 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { getConfig, type AppConfig } from "../../config/env.js";
+import { isDatabaseConnected } from "../../persistence/database.js";
+import { metrics } from "../../observability/metrics.js";
 
 export interface HealthRoutesOptions {
   config?: AppConfig;
@@ -26,7 +28,8 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
 
   /**
    * Readiness probe: checks that configuration is valid and service is ready to accept traffic.
-   * No service-role access required.
+   * In memory mode, verifies configuration and memory persistence readiness.
+   * In postgres mode, additionally verifies database connectivity.
    */
   fastify.get("/readyz", async (_request, reply) => {
     try {
@@ -40,9 +43,22 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
         });
       }
 
+      if (config.CHAT_PERSISTENCE_MODE === "postgres") {
+        const connected = await isDatabaseConnected();
+        if (!connected) {
+          return reply.status(503).send({
+            status: "not_ready",
+            service: "oslava-admin-ai",
+            reason: "PostgreSQL database not connected",
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+
       return reply.status(200).send({
         status: "ready",
         service: "oslava-admin-ai",
+        persistence: config.CHAT_PERSISTENCE_MODE,
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
@@ -53,5 +69,13 @@ export const healthRoutes: FastifyPluginAsync<HealthRoutesOptions> = async (
         timestamp: new Date().toISOString(),
       });
     }
+  });
+
+  /**
+   * Operational metrics endpoint: returns aggregated counters and latency statistics.
+   * Guaranteed zero PII or credentials.
+   */
+  fastify.get("/metrics", async (_request, reply) => {
+    return reply.status(200).send(metrics.getSnapshot());
   });
 };
