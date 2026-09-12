@@ -10,6 +10,13 @@ jobs:
   validate:
     name: Build, Typecheck, Test & Audit
     runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      SUPABASE_URL: https://test.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: test-publishable-key-for-ci
+      CHAT_PERSISTENCE_MODE: memory
+      GROQ_API_KEY: test-groq-key-for-ci
+      APP_TIMEZONE: Asia/Kolkata
 
     steps:
       - name: Checkout Code

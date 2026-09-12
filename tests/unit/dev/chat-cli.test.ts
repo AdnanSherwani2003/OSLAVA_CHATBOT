@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vitest";
 import { parseConfig, setCachedConfig } from "../../../src/config/env.js";
 import { MockOslavaGateway } from "../../../src/dev/mock-oslava.gateway.js";
 import { ToolRegistry } from "../../../src/ai/tool-registry.js";
@@ -28,7 +28,21 @@ describe("Dev Chat CLI & Mock Logic", () => {
     requestId: "test-req-1",
   };
 
+  const prevDevCliMode = process.env.DEV_CLI_MODE;
+
+  beforeAll(() => {
+    process.env.DEV_CLI_MODE = "true";
+    process.env.CHAT_PERSISTENCE_MODE = "memory";
+    setCachedConfig(null);
+  });
+
+  afterAll(() => {
+    process.env.DEV_CLI_MODE = prevDevCliMode;
+    setCachedConfig(null);
+  });
+
   beforeEach(async () => {
+    setCachedConfig(null);
     await sessionRepository.clear();
     await messageRepository.clear();
     await stateRepository.clear();
