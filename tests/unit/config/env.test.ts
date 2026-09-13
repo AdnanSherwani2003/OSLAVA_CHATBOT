@@ -118,4 +118,15 @@ describe("Config: parseConfig", () => {
       }),
     ).toThrowError(/APP_TIMEZONE must be a valid IANA timezone identifier/);
   });
+
+  it("defaults DATABASE_POOL_MAX to 3 and parses integer overrides", () => {
+    const config = parseConfig(validBase);
+    expect(config.DATABASE_POOL_MAX).toBe(3);
+
+    const custom = parseConfig({
+      ...validBase,
+      DATABASE_POOL_MAX: "5",
+    });
+    expect(custom.DATABASE_POOL_MAX).toBe(5);
+  });
 });

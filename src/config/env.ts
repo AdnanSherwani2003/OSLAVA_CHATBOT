@@ -35,6 +35,11 @@ export const rawEnvSchema = z
     // Phase 3 Chatbot Persistence
     CHAT_PERSISTENCE_MODE: z.enum(["memory", "postgres"]).optional(),
     DATABASE_URL: z.string().min(1).optional(),
+    DATABASE_POOL_MAX: z
+      .string()
+      .default("3")
+      .transform((val) => parseInt(val, 10))
+      .pipe(z.number().int().positive()),
 
     // Phase 3 Groq Model Provider
     GROQ_API_KEY: z.string().min(1).optional(),
@@ -203,6 +208,7 @@ export const rawEnvSchema = z
       APP_TIMEZONE: data.APP_TIMEZONE,
       CHAT_PERSISTENCE_MODE: persistenceMode as "memory" | "postgres",
       DATABASE_URL: data.DATABASE_URL,
+      DATABASE_POOL_MAX: data.DATABASE_POOL_MAX,
       GROQ_API_KEY: data.GROQ_API_KEY,
       GROQ_MODEL: data.GROQ_MODEL,
       GROQ_REASONING_EFFORT: data.GROQ_REASONING_EFFORT,
