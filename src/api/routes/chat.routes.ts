@@ -16,6 +16,17 @@ import {
   validateInput,
 } from "../../guardrails/input-validation.js";
 import { ActionForbiddenError, ActionNotFoundError } from "../../domain/errors.js";
+import type {
+  CreateSessionResponse,
+  ListSessionsResponse,
+  GetSessionDetailResponse,
+  GetMessagesResponse,
+  SendMessageResponse,
+  GetPendingActionResponse,
+  GetActionDetailResponse,
+  ConfirmActionResponse,
+  CancelActionResponse,
+} from "../contracts/v1-api.types.js";
 
 export interface ChatRoutesOptions {
   authService?: AuthService;
@@ -53,14 +64,15 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
     opts.actionConfirmationService || actionConfirmationService;
 
   // 1. Create new session
-  fastify.post(
+  fastify.post<{ Reply: CreateSessionResponse }>(
     "/v1/chat/sessions",
     { preHandler: authMiddleware },
     async (request, reply) => {
       const actor = request.actor!;
       const session = await convService.createSession(actor.userId);
 
-      return reply.status(201).send({
+      const response: CreateSessionResponse = {
+        request_id: request.requestId,
         session: {
           id: session.id,
           user_id: session.userId,
@@ -69,19 +81,22 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
           updated_at: session.updatedAt.toISOString(),
           last_activity_at: session.lastActivityAt.toISOString(),
         },
-      });
+      };
+
+      return reply.status(201).send(response);
     },
   );
 
   // 2. List caller's sessions
-  fastify.get(
+  fastify.get<{ Reply: ListSessionsResponse }>(
     "/v1/chat/sessions",
     { preHandler: authMiddleware },
     async (request, reply) => {
       const actor = request.actor!;
       const sessions = await convService.listSessions(actor.userId);
 
-      return reply.status(200).send({
+      const response: ListSessionsResponse = {
+        request_id: request.requestId,
         sessions: sessions.map((s) => ({
           id: s.id,
           user_id: s.userId,
@@ -90,12 +105,14 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
           updated_at: s.updatedAt.toISOString(),
           last_activity_at: s.lastActivityAt.toISOString(),
         })),
-      });
+      };
+
+      return reply.status(200).send(response);
     },
   );
 
   // 3. Get session details & current entity state
-  fastify.get<{ Params: { sessionId: string } }>(
+  fastify.get<{ Params: { sessionId: string }; Reply: GetSessionDetailResponse }>(
     "/v1/chat/sessions/:sessionId",
     { preHandler: authMiddleware },
     async (request, reply) => {
@@ -108,7 +125,8 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
       );
       const state = await convService.getState(sessionId);
 
-      return reply.status(200).send({
+      const response: GetSessionDetailResponse = {
+        request_id: request.requestId,
         session: {
           id: session.id,
           user_id: session.userId,
@@ -127,12 +145,14 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
               recent_workers: state.recentWorkerResults,
             }
           : null,
-      });
+      };
+
+      return reply.status(200).send(response);
     },
   );
 
   // 4. Get message history for a session
-  fastify.get<{ Params: { sessionId: string } }>(
+  fastify.get<{ Params: { sessionId: string }; Reply: GetMessagesResponse }>(
     "/v1/chat/sessions/:sessionId/messages",
     { preHandler: authMiddleware },
     async (request, reply) => {
@@ -146,7 +166,9 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
         offset: query.offset,
       });
 
-      return reply.status(200).send({
+      const response: GetMessagesResponse = {
+        request_id: request.requestId,
+        session_id: sessionId,
         messages: messages.map((m) => ({
           id: m.id,
           session_id: m.sessionId,
@@ -154,12 +176,14 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
           content: m.content,
           created_at: m.createdAt.toISOString(),
         })),
-      });
+      };
+
+      return reply.status(200).send(response);
     },
   );
 
   // 5. Send message and trigger agent turn
-  fastify.post<{ Params: { sessionId: string } }>(
+  fastify.post<{ Params: { sessionId: string }; Reply: SendMessageResponse }>(
     "/v1/chat/sessions/:sessionId/messages",
     { preHandler: authMiddleware },
     async (request, reply) => {
@@ -176,9 +200,11 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
         actor,
       });
 
-      return reply.status(200).send({
+      const response: SendMessageResponse = {
+        request_id: request.requestId,
+        session_id: sessionId,
         message_id: result.messageId,
-        response: result.response,
+        response: result.response as any,
         session_state: result.state
           ? {
               current_event_id: result.state.currentEventId,
@@ -187,12 +213,14 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
               current_worker_label: result.state.currentWorkerLabel,
             }
           : null,
-      });
+      };
+
+      return reply.status(200).send(response);
     },
   );
 
   // 6. Get active pending action for a session
-  fastify.get<{ Params: { sessionId: string } }>(
+  fastify.get<{ Params: { sessionId: string }; Reply: GetPendingActionResponse }>(
     "/v1/chat/sessions/:sessionId/action/pending",
     { preHandler: authMiddleware },
     async (request, reply) => {
@@ -204,25 +232,34 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
         await actionService.getActivePendingActionForSession(sessionId);
 
       if (!action) {
-        return reply.status(200).send({ pending_action: null });
+        const response: GetPendingActionResponse = {
+          request_id: request.requestId,
+          session_id: sessionId,
+          pending_action: null,
+        };
+        return reply.status(200).send(response);
       }
 
-      return reply.status(200).send({
+      const response: GetPendingActionResponse = {
+        request_id: request.requestId,
+        session_id: sessionId,
         pending_action: {
           id: action.id,
           session_id: action.sessionId,
           action_type: action.actionType,
-          status: action.status,
+          status: "PENDING",
           display_summary: action.displaySummary,
           expires_at: action.expiresAt.toISOString(),
           created_at: action.createdAt.toISOString(),
         },
-      });
+      };
+
+      return reply.status(200).send(response);
     },
   );
 
   // 7. Get action details by action ID
-  fastify.get<{ Params: { actionId: string } }>(
+  fastify.get<{ Params: { actionId: string }; Reply: GetActionDetailResponse }>(
     "/v1/chat/actions/:actionId",
     { preHandler: authMiddleware },
     async (request, reply) => {
@@ -237,13 +274,13 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
         throw new ActionForbiddenError(actionId);
       }
 
-      return reply.status(200).send({
+      const response: GetActionDetailResponse = {
+        request_id: request.requestId,
         action: {
           id: action.id,
           session_id: action.sessionId,
           action_type: action.actionType,
           status: action.status,
-          arguments: action.arguments,
           display_summary: action.displaySummary,
           created_at: action.createdAt.toISOString(),
           expires_at: action.expiresAt.toISOString(),
@@ -253,12 +290,14 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
           result_summary: action.resultSummary ?? null,
           execution_error_code: action.executionErrorCode ?? null,
         },
-      });
+      };
+
+      return reply.status(200).send(response);
     },
   );
 
   // 8. Confirm and execute a pending action
-  fastify.post<{ Params: { actionId: string } }>(
+  fastify.post<{ Params: { actionId: string }; Reply: ConfirmActionResponse }>(
     "/v1/chat/actions/:actionId/confirm",
     { preHandler: authMiddleware },
     async (request, reply) => {
@@ -273,20 +312,28 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
         requestId: request.requestId,
       });
 
-      return reply.status(200).send({
-        action_id: result.actionId,
+      const response: ConfirmActionResponse = {
+        request_id: request.requestId,
         session_id: result.sessionId,
-        action_type: result.actionType,
-        status: result.status,
-        display_summary: result.displaySummary,
-        result_summary: result.resultSummary,
-        message: result.message,
-      });
+        response: {
+          type: "action_completed",
+          content: result.message,
+          action: {
+            id: result.actionId,
+            type: result.actionType,
+            status: "SUCCEEDED",
+            summary: result.displaySummary,
+            result: result.resultSummary ?? null,
+          },
+        },
+      };
+
+      return reply.status(200).send(response);
     },
   );
 
   // 9. Cancel a pending action
-  fastify.post<{ Params: { actionId: string } }>(
+  fastify.post<{ Params: { actionId: string }; Reply: CancelActionResponse }>(
     "/v1/chat/actions/:actionId/cancel",
     { preHandler: authMiddleware },
     async (request, reply) => {
@@ -303,14 +350,22 @@ export const chatRoutes: FastifyPluginAsync<ChatRoutesOptions> = async (
         reason: body?.reason,
       });
 
-      return reply.status(200).send({
-        action_id: result.actionId,
+      const response: CancelActionResponse = {
+        request_id: request.requestId,
         session_id: result.sessionId,
-        action_type: result.actionType,
-        status: result.status,
-        display_summary: result.displaySummary,
-        message: result.message,
-      });
+        response: {
+          type: "action_cancelled",
+          content: result.message,
+          action: {
+            id: result.actionId,
+            type: result.actionType,
+            status: "CANCELLED",
+            summary: result.displaySummary,
+          },
+        },
+      };
+
+      return reply.status(200).send(response);
     },
   );
 };

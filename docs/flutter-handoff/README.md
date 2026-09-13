@@ -6,6 +6,7 @@ This package contains everything you need to integrate the chatbot directly into
 
 ## Package Contents
 
+0. **[Authoritative Frozen V1 API Contract](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/API-CONTRACT-V1.md)** — **The single authoritative master contract specification for all 10 endpoints.**
 1. [Authentication Guide](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/authentication.md) — Supabase JWT forwarding and token lifecycle.
 2. [Chat Flow & UI Routing](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/chat-flow.md) — How messages, entity disambiguation, and response types work.
 3. [Confirmation Card Flow](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/confirmation-flow.md) — Staging write intents, rendering confirmation cards, and executing mutations.

@@ -284,8 +284,8 @@ describe("E2E Acceptance: 13-Step Full Lifecycle Mock Acceptance Scenario", () =
 
     expect(turn4.response.type).toBe("confirmation_required");
     const workerConfirmation = turn4.response as any;
-    expect(workerConfirmation.actionId).toBeDefined();
-    expect(workerConfirmation.actionType).toBe("change_worker_category");
+    expect(workerConfirmation.action.id).toBeDefined();
+    expect(workerConfirmation.action.type).toBe("change_worker_category");
 
     // -------------------------------------------------------------
     // STEP 6: Verify NO mutation occurred yet
@@ -299,7 +299,7 @@ describe("E2E Acceptance: 13-Step Full Lifecycle Mock Acceptance Scenario", () =
     // STEP 7: Confirm mutation via ActionConfirmationService
     // -------------------------------------------------------------
     const confirmWorkerResult = await confirmationService.confirmAction({
-      actionId: workerConfirmation.actionId,
+      actionId: workerConfirmation.action.id,
       userId: actor.userId,
       gateway: mockGateway as any,
       requestId: "req_step_7",
@@ -351,13 +351,13 @@ describe("E2E Acceptance: 13-Step Full Lifecycle Mock Acceptance Scenario", () =
     });
     expect(turn7.response.type).toBe("confirmation_required");
     const publishConfirmation = turn7.response as any;
-    expect(publishConfirmation.actionType).toBe("publish_event");
+    expect(publishConfirmation.action.type).toBe("publish_event");
 
     // -------------------------------------------------------------
     // STEP 12: Cancel publish action
     // -------------------------------------------------------------
     const cancelResult = await confirmationService.cancelAction({
-      actionId: publishConfirmation.actionId,
+      actionId: publishConfirmation.action.id,
       userId: actor.userId,
       reason: "Scheduling details need revision",
     });

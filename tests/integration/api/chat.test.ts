@@ -148,6 +148,7 @@ describe("API: /v1/chat Integration", () => {
 
     expect(res.statusCode).toBe(201);
     const body = res.json();
+    expect(body.request_id).toBeDefined();
     expect(body.session).toBeDefined();
     expect(body.session.user_id).toBe(mockProfiles["admin-token-1"].id);
     expect(body.session.status).toBe("ACTIVE");
@@ -168,6 +169,7 @@ describe("API: /v1/chat Integration", () => {
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
+    expect(body.request_id).toBeDefined();
     expect(body.sessions).toHaveLength(1);
     expect(body.sessions[0].user_id).toBe(mockProfiles["admin-token-1"].id);
   });
@@ -188,6 +190,7 @@ describe("API: /v1/chat Integration", () => {
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
+    expect(body.request_id).toBeDefined();
     expect(body.session.id).toBe(sessionId);
     expect(body.session_state).toBeNull();
   });
@@ -236,6 +239,8 @@ describe("API: /v1/chat Integration", () => {
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
+    expect(body.request_id).toBeDefined();
+    expect(body.session_id).toBe(sessionId);
     expect(body.message_id).toBeDefined();
     expect(body.response.type).toBe("message");
     expect(body.response.content).toContain("Hello from Oslava Admin Assistant!");
@@ -249,6 +254,8 @@ describe("API: /v1/chat Integration", () => {
 
     expect(msgRes.statusCode).toBe(200);
     const msgBody = msgRes.json();
+    expect(msgBody.request_id).toBeDefined();
+    expect(msgBody.session_id).toBe(sessionId);
     expect(msgBody.messages).toHaveLength(2);
     expect(msgBody.messages[0].role).toBe("USER");
     expect(msgBody.messages[0].content).toBe("What can you do?");

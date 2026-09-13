@@ -1,21 +1,32 @@
 openapi: 3.1.0
 info:
-  title: Oslava Admin AI Chatbot API
+  title: Oslava Admin AI Chatbot API (Frozen V1 Contract)
   version: 1.0.0
   description: |
-    Production REST API for the standalone Oslava Admin AI Chatbot backend.
-    Provides natural-language conversational analytics, operational queries,
-    and safe two-phase mutations with explicit admin confirmation.
+    Authoritative Frozen V1 REST API specification for the standalone Oslava Admin AI Chatbot backend.
+    
+    This specification represents the frozen client-server contract for the Flutter mobile application handoff.
+    No endpoints, schema fields, or envelope shapes will change without an explicit V2 migration.
+
+tags:
+  - name: Chatbot Application
+    description: Core conversational and mutation endpoints consumed by the Flutter Admin mobile app.
+  - name: Operational
+    description: Health, readiness, and monitoring probes for infrastructure and orchestration.
 
 servers:
   - url: http://localhost:3000
-    description: Local Development / Staging Environment
+    description: Local Development / Staging Environment (Use http://10.0.2.2:3000 on Android Emulator)
   - url: https://api-chatbot.oslava.com
     description: Production Environment
 
 paths:
+  # ==========================================================================
+  # OPERATIONAL ENDPOINTS
+  # ==========================================================================
   /healthz:
     get:
+      tags: [Operational]
       summary: Liveness Probe
       description: Returns process uptime and status. No authentication required.
       responses:
@@ -24,15 +35,11 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status: { type: string, example: "ok" }
-                  service: { type: string, example: "oslava-admin-ai" }
-                  timestamp: { type: string, format: date-time }
-                  uptime: { type: number, example: 124.5 }
+                $ref: "#/components/schemas/HealthzResponse"
 
   /readyz:
     get:
+      tags: [Operational]
       summary: Readiness Probe
       description: Checks configuration and persistence readiness without executing expensive AI calls.
       responses:
@@ -41,12 +48,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status: { type: string, example: "ready" }
-                  service: { type: string, example: "oslava-admin-ai" }
-                  persistence: { type: string, enum: [memory, postgres] }
-                  timestamp: { type: string, format: date-time }
+                $ref: "#/components/schemas/ReadyzResponse"
         "503":
           description: Service is not ready
           content:
@@ -56,20 +58,27 @@ paths:
 
   /metrics:
     get:
+      tags: [Operational]
       summary: Operational Metrics
-      description: Returns lightweight in-memory counters and latency statistics without PII or secrets.
+      description: Returns lightweight counters and latency statistics without PII or secrets.
       responses:
         "200":
-          description: Metrics snapshot
+          description: Metrics snapshot in JSON format
           content:
             application/json:
               schema:
                 type: object
 
+  # ==========================================================================
+  # APPLICATION ENDPOINTS (1 - 10)
+  # ==========================================================================
+
+  # 1. Caller Identity
   /v1/auth/me:
     get:
-      summary: Get Authenticated Admin Profile
-      description: Returns current caller's profile verified from Supabase JWT and profiles table.
+      tags: [Chatbot Application]
+      summary: 10. Get Authenticated Admin Profile
+      description: Returns current caller's profile verified from Supabase JWT and profiles table. Requires active ADMIN or SUPER_ADMIN role.
       security:
         - BearerAuth: []
       responses:
@@ -78,22 +87,17 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  user_id: { type: string, format: uuid }
-                  role: { type: string, enum: [ADMIN, SUPER_ADMIN] }
-                  account_status: { type: string, enum: [ACTIVE] }
-                  full_name: { type: string }
-                  email: { type: string, nullable: true }
-                  phone: { type: string, nullable: true }
+                $ref: "#/components/schemas/AuthMeResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  # 2. Session Management: Create & List
   /v1/chat/sessions:
     post:
-      summary: Create Chat Session
+      tags: [Chatbot Application]
+      summary: 1. Create Chat Session
       description: Initializes a new conversational session for the authenticated admin.
       security:
         - BearerAuth: []
@@ -103,17 +107,17 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  session:
-                    $ref: "#/components/schemas/ChatSession"
+                $ref: "#/components/schemas/CreateSessionResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/RateLimited"
     get:
-      summary: List User Sessions
-      description: Retrieves all active chat sessions owned by the authenticated admin.
+      tags: [Chatbot Application]
+      summary: 2. List Caller Sessions
+      description: Retrieves all chat sessions owned by the authenticated admin.
       security:
         - BearerAuth: []
       responses:
@@ -122,16 +126,17 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  sessions:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ChatSession"
+                $ref: "#/components/schemas/ListSessionsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
+  # 3. Session Detail & State
   /v1/chat/sessions/{sessionId}:
     get:
-      summary: Get Session Details & State
+      tags: [Chatbot Application]
+      summary: 3. Get Session Details & Grounded State
       description: Returns session metadata along with current grounded entity context.
       security:
         - BearerAuth: []
@@ -142,22 +147,23 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Session details
+          description: Session details and entity state
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  session:
-                    $ref: "#/components/schemas/ChatSession"
-                  session_state:
-                    $ref: "#/components/schemas/SessionState"
+                $ref: "#/components/schemas/GetSessionDetailResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # 4. Message History
   /v1/chat/sessions/{sessionId}/messages:
     get:
-      summary: Get Message History
+      tags: [Chatbot Application]
+      summary: 4. Get Message History
       description: Returns paginated message history for a session.
       security:
         - BearerAuth: []
@@ -176,18 +182,22 @@ paths:
           schema: { type: integer, default: 0, minimum: 0 }
       responses:
         "200":
-          description: Chat messages
+          description: Chat messages in chronological order
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  messages:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ChatMessage"
+                $ref: "#/components/schemas/GetMessagesResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    # 5. Send User Message Turn
     post:
-      summary: Send User Prompt / Turn
+      tags: [Chatbot Application]
+      summary: 5. Send User Prompt / Turn
       description: Sends a natural language message to the assistant and executes a conversational agent turn.
       security:
         - BearerAuth: []
@@ -201,34 +211,32 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [message]
-              properties:
-                message: { type: string, minLength: 1 }
+              $ref: "#/components/schemas/SendMessageRequest"
       responses:
         "200":
-          description: Agent response (standard message, entity selection, or confirmation required)
+          description: Agent response turn (standard message, entity selection required, or confirmation required)
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  message_id: { type: string, format: uuid }
-                  response:
-                    oneOf:
-                      - $ref: "#/components/schemas/StandardMessageResponse"
-                      - $ref: "#/components/schemas/EntitySelectionResponse"
-                      - $ref: "#/components/schemas/ConfirmationRequiredResponse"
-                  session_state:
-                    $ref: "#/components/schemas/SessionStateSummary"
+                $ref: "#/components/schemas/SendMessageResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "429":
           $ref: "#/components/responses/RateLimited"
 
+  # 6. Active Pending Action
   /v1/chat/sessions/{sessionId}/action/pending:
     get:
-      summary: Get Active Pending Action
+      tags: [Chatbot Application]
+      summary: 6. Get Active Pending Action
       description: Returns the currently unconfirmed action for this session, if any.
       security:
         - BearerAuth: []
@@ -239,20 +247,24 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Pending action or null
+          description: Active pending action or null
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  pending_action:
-                    nullable: true
-                    $ref: "#/components/schemas/PendingActionSummary"
+                $ref: "#/components/schemas/GetPendingActionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
+  # 7. Action Detail
   /v1/chat/actions/{actionId}:
     get:
-      summary: Get Action Details
-      description: Returns full metadata, arguments, timestamps, and outcome for an action ID.
+      tags: [Chatbot Application]
+      summary: 7. Get Action Details
+      description: Returns public metadata, timestamps, and execution outcome for an action ID. Excludes raw internal database arguments.
       security:
         - BearerAuth: []
       parameters:
@@ -262,18 +274,23 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Action record
+          description: Action details
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  action:
-                    $ref: "#/components/schemas/ActionRecord"
+                $ref: "#/components/schemas/GetActionDetailResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
+  # 8. Confirm Action
   /v1/chat/actions/{actionId}/confirm:
     post:
-      summary: Confirm and Execute Pending Action
+      tags: [Chatbot Application]
+      summary: 8. Confirm and Execute Pending Action
       description: Explicitly confirms a pending action. Performs stale-state validation, claims atomically, executes mutation through request-scoped caller JWT, and verifies read-after-write.
       security:
         - BearerAuth: []
@@ -288,31 +305,23 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  action_id: { type: string, format: uuid }
-                  session_id: { type: string, format: uuid }
-                  action_type: { type: string }
-                  status: { type: string, example: "SUCCEEDED" }
-                  display_summary: { type: object }
-                  result_summary: { type: object }
-                  message: { type: string }
+                $ref: "#/components/schemas/ConfirmActionResponse"
         "400":
-          description: Action expired
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
-          description: Duplicate confirmation or stale entity state
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
+          $ref: "#/components/responses/Conflict"
 
+  # 9. Cancel Action
   /v1/chat/actions/{actionId}/cancel:
     post:
-      summary: Cancel Pending Action
+      tags: [Chatbot Application]
+      summary: 9. Cancel Pending Action
       description: Cancels a pending action and marks it as CANCELLED without modifying underlying entity data.
       security:
         - BearerAuth: []
@@ -326,65 +335,78 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                reason: { type: string }
+              $ref: "#/components/schemas/CancelActionRequest"
       responses:
         "200":
           description: Action cancelled
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  action_id: { type: string, format: uuid }
-                  session_id: { type: string, format: uuid }
-                  action_type: { type: string }
-                  status: { type: string, example: "CANCELLED" }
-                  display_summary: { type: object }
-                  message: { type: string }
+                $ref: "#/components/schemas/CancelActionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
+# ============================================================================
+# COMPONENTS & SCHEMAS
+# ============================================================================
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Supabase Access Token provided upon user login.
+      description: Supabase Access Token provided upon admin phone login.
 
   responses:
     BadRequest:
-      description: Invalid input or validation failure
+      description: Invalid input or validation failure (400)
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
     Unauthorized:
-      description: Missing or invalid authentication token
+      description: Missing or invalid authentication token (401)
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
     Forbidden:
-      description: Insufficient permissions (Requires ADMIN or SUPER_ADMIN)
+      description: Insufficient permissions (Requires active ADMIN or SUPER_ADMIN) (403)
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
     NotFound:
-      description: Resource was not found
+      description: Resource was not found (404)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Conflict:
+      description: State conflict, duplicate execution, or stale state (409)
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
     RateLimited:
-      description: Operation rate limit exceeded
+      description: Operation rate limit exceeded (429)
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
 
   schemas:
+    # ------------------------------------------------------------------------
+    # Standard Error Envelope
+    # ------------------------------------------------------------------------
     ErrorEnvelope:
       type: object
       required: [error]
@@ -420,12 +442,43 @@ components:
                 - ACTION_OUTCOME_UNKNOWN
                 - PENDING_ACTION_EXISTS
                 - INTERNAL_ERROR
-            message: { type: string }
-            retryable: { type: boolean }
-            request_id: { type: string }
+            message:
+              type: string
+              example: "Action cannot be executed because underlying entity state has changed."
+            retryable:
+              type: boolean
+              example: false
+            request_id:
+              type: string
+              example: "req_f1a2b3c4d5e6"
 
-    ChatSession:
+    # ------------------------------------------------------------------------
+    # Operational Schemas
+    # ------------------------------------------------------------------------
+    HealthzResponse:
       type: object
+      required: [status, service, timestamp]
+      properties:
+        status: { type: string, const: "ok" }
+        service: { type: string, example: "oslava-admin-ai" }
+        timestamp: { type: string, format: date-time }
+        uptime: { type: number, example: 142.5 }
+
+    ReadyzResponse:
+      type: object
+      required: [status, service, persistence, timestamp]
+      properties:
+        status: { type: string, const: "ready" }
+        service: { type: string, example: "oslava-admin-ai" }
+        persistence: { type: string, enum: [memory, postgres] }
+        timestamp: { type: string, format: date-time }
+
+    # ------------------------------------------------------------------------
+    # Domain Entity Schemas
+    # ------------------------------------------------------------------------
+    SessionSummary:
+      type: object
+      required: [id, user_id, status, created_at, updated_at, last_activity_at]
       properties:
         id: { type: string, format: uuid }
         user_id: { type: string, format: uuid }
@@ -434,8 +487,9 @@ components:
         updated_at: { type: string, format: date-time }
         last_activity_at: { type: string, format: date-time }
 
-    ChatMessage:
+    ChatMessageRecord:
       type: object
+      required: [id, session_id, role, content, created_at]
       properties:
         id: { type: string, format: uuid }
         session_id: { type: string, format: uuid }
@@ -443,86 +497,219 @@ components:
         content: { type: string }
         created_at: { type: string, format: date-time }
 
-    SessionState:
+    EntityStateSnapshot:
       type: object
       nullable: true
       properties:
-        current_event_id: { type: string, nullable: true }
+        current_event_id: { type: string, format: uuid, nullable: true }
         current_event_label: { type: string, nullable: true }
-        current_worker_id: { type: string, nullable: true }
+        current_worker_id: { type: string, format: uuid, nullable: true }
         current_worker_label: { type: string, nullable: true }
-        recent_events: { type: array, items: { type: object } }
-        recent_workers: { type: array, items: { type: object } }
+        recent_events:
+          type: array
+          items:
+            type: object
+        recent_workers:
+          type: array
+          items:
+            type: object
 
-    SessionStateSummary:
+    # ------------------------------------------------------------------------
+    # Endpoint Response Schemas
+    # ------------------------------------------------------------------------
+    AuthMeResponse:
       type: object
-      nullable: true
+      required: [request_id, user_id, role, display_name, account_status]
       properties:
-        current_event_id: { type: string, nullable: true }
-        current_event_label: { type: string, nullable: true }
-        current_worker_id: { type: string, nullable: true }
-        current_worker_label: { type: string, nullable: true }
+        request_id: { type: string, example: "req_auth_001" }
+        user_id: { type: string, format: uuid }
+        role: { type: string, enum: [ADMIN, SUPER_ADMIN] }
+        display_name: { type: string, example: "Admin Alice" }
+        account_status: { type: string, const: "ACTIVE" }
+        worker_number: { type: integer, example: 101 }
 
-    StandardMessageResponse:
+    CreateSessionResponse:
+      type: object
+      required: [request_id, session]
+      properties:
+        request_id: { type: string }
+        session:
+          $ref: "#/components/schemas/SessionSummary"
+
+    ListSessionsResponse:
+      type: object
+      required: [request_id, sessions]
+      properties:
+        request_id: { type: string }
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionSummary"
+
+    GetSessionDetailResponse:
+      type: object
+      required: [request_id, session, session_state]
+      properties:
+        request_id: { type: string }
+        session:
+          $ref: "#/components/schemas/SessionSummary"
+        session_state:
+          $ref: "#/components/schemas/EntityStateSnapshot"
+
+    GetMessagesResponse:
+      type: object
+      required: [request_id, session_id, messages]
+      properties:
+        request_id: { type: string }
+        session_id: { type: string, format: uuid }
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessageRecord"
+
+    # ------------------------------------------------------------------------
+    # Chat Turn & Response Types
+    # ------------------------------------------------------------------------
+    SendMessageRequest:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, minLength: 1 }
+
+    StandardMessagePayload:
       type: object
       required: [type, content]
       properties:
         type: { type: string, const: "message" }
         content: { type: string }
 
-    EntitySelectionResponse:
+    EntitySelectionOption:
       type: object
-      required: [type, entityType, question, options]
+      required: [id, display_name, subtitle]
+      properties:
+        id: { type: string }
+        display_name: { type: string }
+        subtitle: { type: string }
+
+    EntitySelectionPayload:
+      type: object
+      required: [type, content, selection]
       properties:
         type: { type: string, const: "entity_selection_required" }
-        entityType: { type: string, enum: [event, worker] }
-        question: { type: string }
-        options:
-          type: array
-          items:
-            type: object
-            required: [id, label]
-            properties:
-              id: { type: string }
-              label: { type: string }
-              metadata: { type: object }
+        content: { type: string }
+        selection:
+          type: object
+          required: [entity_type, options]
+          properties:
+            entity_type: { type: string, enum: [event, worker] }
+            options:
+              type: array
+              items:
+                $ref: "#/components/schemas/EntitySelectionOption"
 
-    ConfirmationRequiredResponse:
+    ConfirmationRequiredPayload:
       type: object
-      required: [type, actionId, actionType, displaySummary, content, expiresAt]
+      required: [type, content, action]
       properties:
         type: { type: string, const: "confirmation_required" }
-        actionId: { type: string, format: uuid }
-        actionType:
+        content: { type: string }
+        action:
+          type: object
+          required: [id, type, status, expires_at, summary]
+          properties:
+            id: { type: string, format: uuid }
+            type:
+              type: string
+              enum:
+                - change_worker_category
+                - publish_event
+                - complete_event
+                - close_event
+            status: { type: string, const: "PENDING" }
+            expires_at: { type: string, format: date-time }
+            summary: { type: object }
+
+    ChatResponsePayload:
+      oneOf:
+        - $ref: "#/components/schemas/StandardMessagePayload"
+        - $ref: "#/components/schemas/EntitySelectionPayload"
+        - $ref: "#/components/schemas/ConfirmationRequiredPayload"
+
+    SessionTurnState:
+      type: object
+      nullable: true
+      properties:
+        current_event_id: { type: string, format: uuid, nullable: true }
+        current_event_label: { type: string, nullable: true }
+        current_worker_id: { type: string, format: uuid, nullable: true }
+        current_worker_label: { type: string, nullable: true }
+
+    SendMessageResponse:
+      type: object
+      required: [request_id, session_id, message_id, response, session_state]
+      properties:
+        request_id: { type: string }
+        session_id: { type: string, format: uuid }
+        message_id: { type: string, format: uuid }
+        response:
+          $ref: "#/components/schemas/ChatResponsePayload"
+        session_state:
+          $ref: "#/components/schemas/SessionTurnState"
+
+    # ------------------------------------------------------------------------
+    # Action Confirmation & Lifecycle Schemas
+    # ------------------------------------------------------------------------
+    PendingActionSummary:
+      type: object
+      required: [id, session_id, action_type, status, display_summary, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        action_type:
           type: string
           enum:
             - change_worker_category
             - publish_event
             - complete_event
             - close_event
-        displaySummary: { type: object }
-        content: { type: string }
-        expiresAt: { type: string, format: date-time }
-
-    PendingActionSummary:
-      type: object
-      properties:
-        id: { type: string, format: uuid }
-        session_id: { type: string, format: uuid }
-        action_type: { type: string }
-        status: { type: string }
+        status: { type: string, const: "PENDING" }
         display_summary: { type: object }
         expires_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 
-    ActionRecord:
+    GetPendingActionResponse:
       type: object
+      required: [request_id, session_id, pending_action]
+      properties:
+        request_id: { type: string }
+        session_id: { type: string, format: uuid }
+        pending_action:
+          nullable: true
+          $ref: "#/components/schemas/PendingActionSummary"
+
+    ActionDetail:
+      type: object
+      required: [id, session_id, action_type, status, display_summary, created_at, expires_at, confirmed_at, cancelled_at, executed_at, result_summary, execution_error_code]
       properties:
         id: { type: string, format: uuid }
         session_id: { type: string, format: uuid }
-        action_type: { type: string }
-        status: { type: string }
-        arguments: { type: object }
+        action_type:
+          type: string
+          enum:
+            - change_worker_category
+            - publish_event
+            - complete_event
+            - close_event
+        status:
+          type: string
+          enum:
+            - PENDING
+            - EXECUTING
+            - SUCCEEDED
+            - FAILED
+            - CANCELLED
+            - EXPIRED
+            - STALE
         display_summary: { type: object }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
@@ -531,3 +718,71 @@ components:
         executed_at: { type: string, format: date-time, nullable: true }
         result_summary: { type: object, nullable: true }
         execution_error_code: { type: string, nullable: true }
+
+    GetActionDetailResponse:
+      type: object
+      required: [request_id, action]
+      properties:
+        request_id: { type: string }
+        action:
+          $ref: "#/components/schemas/ActionDetail"
+
+    ConfirmActionResponse:
+      type: object
+      required: [request_id, session_id, response]
+      properties:
+        request_id: { type: string }
+        session_id: { type: string, format: uuid }
+        response:
+          type: object
+          required: [type, content, action]
+          properties:
+            type: { type: string, const: "action_completed" }
+            content: { type: string }
+            action:
+              type: object
+              required: [id, type, status, summary, result]
+              properties:
+                id: { type: string, format: uuid }
+                type:
+                  type: string
+                  enum:
+                    - change_worker_category
+                    - publish_event
+                    - complete_event
+                    - close_event
+                status: { type: string, const: "SUCCEEDED" }
+                summary: { type: object }
+                result: { type: object, nullable: true }
+
+    CancelActionRequest:
+      type: object
+      properties:
+        reason: { type: string }
+
+    CancelActionResponse:
+      type: object
+      required: [request_id, session_id, response]
+      properties:
+        request_id: { type: string }
+        session_id: { type: string, format: uuid }
+        response:
+          type: object
+          required: [type, content, action]
+          properties:
+            type: { type: string, const: "action_cancelled" }
+            content: { type: string }
+            action:
+              type: object
+              required: [id, type, status, summary]
+              properties:
+                id: { type: string, format: uuid }
+                type:
+                  type: string
+                  enum:
+                    - change_worker_category
+                    - publish_event
+                    - complete_event
+                    - close_event
+                status: { type: string, const: "CANCELLED" }
+                summary: { type: object }

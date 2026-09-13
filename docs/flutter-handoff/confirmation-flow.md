@@ -37,22 +37,30 @@ Authorization: Bearer <supabase_access_token>
 ### Success Response (HTTP 200)
 ```json
 {
-  "action_id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
-  "session_id": "sess_12345",
-  "action_type": "change_worker_category",
-  "status": "SUCCEEDED",
-  "display_summary": {
-    "workerName": "Arif Ahmed",
-    "currentCategory": "B",
-    "newCategory": "A"
-  },
-  "result_summary": {
-    "worker_id": "22222222-2222-4222-8222-222222222222",
-    "old_category": "B",
-    "new_category": "A",
-    "status": "SUCCESS"
-  },
-  "message": "Action 'change_worker_category' completed successfully."
+  "request_id": "req_d39589d107a94488be6dae766e4a689b",
+  "session_id": "2ff5d0c5-8d62-48a0-9cc4-47ea818cf0f9",
+  "response": {
+    "type": "action_completed",
+    "content": "Action 'change_worker_category' completed successfully.",
+    "action": {
+      "id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
+      "type": "change_worker_category",
+      "status": "SUCCEEDED",
+      "summary": {
+        "workerName": "Arif Ahmed",
+        "workerNumber": 1002,
+        "currentCategory": "B",
+        "newCategory": "A",
+        "reason": "Demonstrated exemplary service"
+      },
+      "result": {
+        "worker_id": "22222222-2222-4222-8222-222222222222",
+        "old_category": "B",
+        "new_category": "A",
+        "status": "SUCCESS"
+      }
+    }
+  }
 }
 ```
 **UI Action**:
@@ -78,12 +86,24 @@ Content-Type: application/json
 ### Response (HTTP 200)
 ```json
 {
-  "action_id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
-  "session_id": "sess_12345",
-  "action_type": "change_worker_category",
-  "status": "CANCELLED",
-  "display_summary": { ... },
-  "message": "Action 'change_worker_category' was cancelled."
+  "request_id": "req_45690184b23847e38466bbd08a5c43d2",
+  "session_id": "2ff5d0c5-8d62-48a0-9cc4-47ea818cf0f9",
+  "response": {
+    "type": "action_cancelled",
+    "content": "Action 'change_worker_category' was cancelled.",
+    "action": {
+      "id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
+      "type": "change_worker_category",
+      "status": "CANCELLED",
+      "summary": {
+        "workerName": "Arif Ahmed",
+        "workerNumber": 1002,
+        "currentCategory": "B",
+        "newCategory": "A",
+        "reason": "Demonstrated exemplary service"
+      }
+    }
+  }
 }
 ```
 **UI Action**:

@@ -166,7 +166,8 @@ describe("API: /v1/auth/me Integration", () => {
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body).toEqual({
+    expect(body.request_id).toBeDefined();
+    expect(body).toMatchObject({
       user_id: "usr-admin-1",
       role: "ADMIN",
       display_name: "Admin Alice",
@@ -191,7 +192,8 @@ describe("API: /v1/auth/me Integration", () => {
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body).toEqual({
+    expect(body.request_id).toBeDefined();
+    expect(body).toMatchObject({
       user_id: "usr-super-1",
       role: "SUPER_ADMIN",
       display_name: "Super Admin Bob",

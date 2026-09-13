@@ -307,8 +307,11 @@ describe("API: /v1/chat Actions Confirmation & Execution Integration", () => {
 
     expect(aliceConfirmRes.statusCode).toBe(200);
     const aliceBody = JSON.parse(aliceConfirmRes.body);
-    expect(aliceBody.status).toBe("SUCCEEDED");
-    expect(aliceBody.action_id).toBe(proposed.id);
+    expect(aliceBody.request_id).toBeDefined();
+    expect(aliceBody.session_id).toBe(session.id);
+    expect(aliceBody.response.type).toBe("action_completed");
+    expect(aliceBody.response.action.status).toBe("SUCCEEDED");
+    expect(aliceBody.response.action.id).toBe(proposed.id);
 
     // 6. Confirming again returns 409 ACTION_ALREADY_RESOLVED
     const reConfirmRes = await app.inject({
@@ -347,7 +350,10 @@ describe("API: /v1/chat Actions Confirmation & Execution Integration", () => {
 
     expect(cancelRes.statusCode).toBe(200);
     const cancelBody = JSON.parse(cancelRes.body);
-    expect(cancelBody.status).toBe("CANCELLED");
+    expect(cancelBody.request_id).toBeDefined();
+    expect(cancelBody.session_id).toBe(session.id);
+    expect(cancelBody.response.type).toBe("action_cancelled");
+    expect(cancelBody.response.action.status).toBe("CANCELLED");
 
     // Subsequent confirm should fail with 409
     const confirmRes = await app.inject({

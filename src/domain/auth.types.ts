@@ -62,6 +62,7 @@ export interface UserProfileRecord {
  * Secrets, raw tokens, and sensitive DB fields are excluded.
  */
 export interface AuthMeResponse {
+  request_id: string;
   user_id: string;
   role: AllowedAdminRole;
   display_name: string;

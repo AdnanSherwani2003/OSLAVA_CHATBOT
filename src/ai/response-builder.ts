@@ -1,9 +1,9 @@
-import type { PendingActionRecord } from "../actions/action.types.js";
+import type { PendingActionRecord, ActionType } from "../actions/action.types.js";
 
 export interface EntityOption {
   id: string;
-  label: string;
-  metadata?: Record<string, unknown>;
+  display_name: string;
+  subtitle: string;
 }
 
 export interface StandardAgentResponse {
@@ -13,18 +13,23 @@ export interface StandardAgentResponse {
 
 export interface EntitySelectionResponse {
   type: "entity_selection_required";
-  entityType: "event" | "worker";
-  question: string;
-  options: EntityOption[];
+  content: string;
+  selection: {
+    entity_type: "event" | "worker";
+    options: EntityOption[];
+  };
 }
 
 export interface ConfirmationRequiredResponse {
   type: "confirmation_required";
-  actionId: string;
-  actionType: string;
-  displaySummary: Record<string, unknown>;
   content: string;
-  expiresAt: string;
+  action: {
+    id: string;
+    type: ActionType;
+    status: "PENDING";
+    expires_at: string;
+    summary: Record<string, unknown>;
+  };
 }
 
 export type AgentResponse =
@@ -41,14 +46,16 @@ export function buildStandardResponse(content: string): StandardAgentResponse {
 
 export function buildDisambiguationResponse(
   entityType: "event" | "worker",
-  question: string,
+  content: string,
   options: EntityOption[],
 ): EntitySelectionResponse {
   return {
     type: "entity_selection_required",
-    entityType,
-    question: question.trim(),
-    options,
+    content: content.trim(),
+    selection: {
+      entity_type: entityType,
+      options,
+    },
   };
 }
 
@@ -70,10 +77,13 @@ export function buildConfirmationRequiredResponse(
 
   return {
     type: "confirmation_required",
-    actionId: action.id,
-    actionType: action.actionType,
-    displaySummary: action.displaySummary,
     content,
-    expiresAt: new Date(action.expiresAt).toISOString(),
+    action: {
+      id: action.id,
+      type: action.actionType,
+      status: "PENDING",
+      expires_at: new Date(action.expiresAt).toISOString(),
+      summary: action.displaySummary,
+    },
   };
 }

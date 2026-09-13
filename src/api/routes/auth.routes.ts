@@ -24,6 +24,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (
       const actor = request.actor!;
 
       const response: AuthMeResponse = {
+        request_id: request.requestId,
         user_id: actor.userId,
         role: actor.role,
         display_name: actor.displayName,

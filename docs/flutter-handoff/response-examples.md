@@ -2,6 +2,8 @@
 
 This document provides exact, copy-pasteable JSON responses for every response type in the Oslava Admin AI Chatbot API.
 
+All response envelopes contain `request_id` and, where applicable, `session_id`, `message_id`, `response`, and `session_state`.
+
 ---
 
 ## 1. Normal Message Response (`type: "message"`)
@@ -9,6 +11,8 @@ Returned when the agent answers a question using read tools.
 
 ```json
 {
+  "request_id": "req_318e8a60bb4a43aebc914e9f758410ca",
+  "session_id": "2ff5d0c5-8d62-48a0-9cc4-47ea818cf0f9",
   "message_id": "93424d5b-426c-486a-a82f-8706d860d5b6",
   "response": {
     "type": "message",
@@ -30,21 +34,27 @@ Returned when an entity reference is ambiguous and needs user selection.
 
 ```json
 {
+  "request_id": "req_79c836d5e1284ebcb895fa784860bca1",
+  "session_id": "2ff5d0c5-8d62-48a0-9cc4-47ea818cf0f9",
   "message_id": "e9365e12-881c-4ce1-8072-a169b2d86a41",
   "response": {
     "type": "entity_selection_required",
-    "entityType": "worker",
-    "question": "I found multiple workers matching that query. Which one would you like to inspect?",
-    "options": [
-      {
-        "id": "11111111-1111-4111-8111-111111111111",
-        "label": "Arif Khan (Worker #1001, Category C)"
-      },
-      {
-        "id": "22222222-2222-4222-8222-222222222222",
-        "label": "Arif Ahmed (Worker #1002, Category B)"
-      }
-    ]
+    "content": "I found multiple workers matching that query. Which one would you like to inspect?",
+    "selection": {
+      "entity_type": "worker",
+      "options": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "display_name": "Arif Khan",
+          "subtitle": "Worker #1001 • Category C"
+        },
+        {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "display_name": "Arif Ahmed",
+          "subtitle": "Worker #1002 • Category B"
+        }
+      ]
+    }
   },
   "session_state": null
 }
@@ -57,21 +67,26 @@ Returned when a write action is staged for admin confirmation.
 
 ```json
 {
+  "request_id": "req_55b0a216d12f45888d30e3184f4f4699",
+  "session_id": "2ff5d0c5-8d62-48a0-9cc4-47ea818cf0f9",
   "message_id": "b304cbca-e2e7-402b-a36c-92d6e3c63d59",
   "response": {
     "type": "confirmation_required",
-    "actionId": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
-    "actionType": "change_worker_category",
-    "displaySummary": {
-      "workerId": "22222222-2222-4222-8222-222222222222",
-      "workerName": "Arif Ahmed",
-      "workerNumber": 1002,
-      "currentCategory": "B",
-      "newCategory": "A",
-      "reason": "Demonstrated exemplary service during high-volume wedding"
-    },
     "content": "I have staged a category change for worker **Arif Ahmed** (Worker #1002) from category **B** to **A**.\n\nReason: \"Demonstrated exemplary service during high-volume wedding\"\n\nPlease review and confirm or cancel this action.",
-    "expiresAt": "2026-09-13T02:00:41.280Z"
+    "action": {
+      "id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
+      "type": "change_worker_category",
+      "status": "PENDING",
+      "expires_at": "2026-09-14T02:15:00.000Z",
+      "summary": {
+        "workerId": "22222222-2222-4222-8222-222222222222",
+        "workerName": "Arif Ahmed",
+        "workerNumber": 1002,
+        "currentCategory": "B",
+        "newCategory": "A",
+        "reason": "Demonstrated exemplary service during high-volume wedding"
+      }
+    }
   },
   "session_state": {
     "current_event_id": null,
@@ -84,49 +99,63 @@ Returned when a write action is staged for admin confirmation.
 
 ---
 
-## 4. Action Completed / Executed (`POST /actions/:actionId/confirm`)
+## 4. Action Completed / Executed (`POST /v1/chat/actions/:actionId/confirm`)
 Returned upon explicit confirmation.
 
 ```json
 {
-  "action_id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
-  "session_id": "eb7d84e6-00eb-4d54-91a5-dd9c33d78da3",
-  "action_type": "change_worker_category",
-  "status": "SUCCEEDED",
-  "display_summary": {
-    "workerName": "Arif Ahmed",
-    "workerNumber": 1002,
-    "currentCategory": "B",
-    "newCategory": "A",
-    "reason": "Demonstrated exemplary service"
-  },
-  "result_summary": {
-    "worker_id": "22222222-2222-4222-8222-222222222222",
-    "old_category": "B",
-    "new_category": "A",
-    "status": "SUCCESS"
-  },
-  "message": "Action 'change_worker_category' completed successfully."
+  "request_id": "req_d39589d107a94488be6dae766e4a689b",
+  "session_id": "2ff5d0c5-8d62-48a0-9cc4-47ea818cf0f9",
+  "response": {
+    "type": "action_completed",
+    "content": "Action 'change_worker_category' completed successfully.",
+    "action": {
+      "id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
+      "type": "change_worker_category",
+      "status": "SUCCEEDED",
+      "summary": {
+        "workerName": "Arif Ahmed",
+        "workerNumber": 1002,
+        "currentCategory": "B",
+        "newCategory": "A",
+        "reason": "Demonstrated exemplary service"
+      },
+      "result": {
+        "worker_id": "22222222-2222-4222-8222-222222222222",
+        "old_category": "B",
+        "new_category": "A",
+        "status": "SUCCESS"
+      }
+    }
+  }
 }
 ```
 
 ---
 
-## 5. Action Cancelled (`POST /actions/:actionId/cancel`)
+## 5. Action Cancelled (`POST /v1/chat/actions/:actionId/cancel`)
 Returned upon explicit cancellation.
 
 ```json
 {
-  "action_id": "641ccd29-9868-49e0-ad5b-9b6e257378b9",
-  "session_id": "eb7d84e6-00eb-4d54-91a5-dd9c33d78da3",
-  "action_type": "publish_event",
-  "status": "CANCELLED",
-  "display_summary": {
-    "eventName": "Tech Conference",
-    "currentStatus": "DRAFT",
-    "reason": "Staffing confirmed"
-  },
-  "message": "Action 'publish_event' was cancelled."
+  "request_id": "req_45690184b23847e38466bbd08a5c43d2",
+  "session_id": "2ff5d0c5-8d62-48a0-9cc4-47ea818cf0f9",
+  "response": {
+    "type": "action_cancelled",
+    "content": "Action 'change_worker_category' was cancelled.",
+    "action": {
+      "id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
+      "type": "change_worker_category",
+      "status": "CANCELLED",
+      "summary": {
+        "workerName": "Arif Ahmed",
+        "workerNumber": 1002,
+        "currentCategory": "B",
+        "newCategory": "A",
+        "reason": "Demonstrated exemplary service"
+      }
+    }
+  }
 }
 ```
 
@@ -141,7 +170,7 @@ Returned on any 4xx / 5xx error.
     "code": "ACTION_STALE",
     "message": "Worker state changed since proposal. Expected category 'B', current is 'C'.",
     "retryable": false,
-    "request_id": "req_84c8a2b5-1234"
+    "request_id": "req_84c8a2b5d123"
   }
 }
 ```

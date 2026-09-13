@@ -232,26 +232,26 @@ async function runCli(): Promise<void> {
         if (turnResult.response.type === "message") {
           console.log(turnResult.response.content);
         } else if (turnResult.response.type === "entity_selection_required") {
-          console.log(turnResult.response.question);
-          for (let i = 0; i < turnResult.response.options.length; i++) {
-            const opt = turnResult.response.options[i];
-            console.log(`  ${i + 1}. ${opt.label} (${opt.id})`);
+          console.log(turnResult.response.content);
+          for (let i = 0; i < turnResult.response.selection.options.length; i++) {
+            const opt = turnResult.response.selection.options[i];
+            console.log(`  ${i + 1}. ${opt.display_name} (${opt.subtitle}) [${opt.id}]`);
           }
         } else if (turnResult.response.type === "confirmation_required") {
           console.log(turnResult.response.content);
           console.log("\n--------------------------------------------------");
           console.log("[CONFIRMATION CARD]");
-          console.log(`Action ID:   ${turnResult.response.actionId}`);
-          console.log(`Action Type: ${turnResult.response.actionType}`);
-          console.log(`Expires At:  ${turnResult.response.expiresAt}`);
+          console.log(`Action ID:   ${turnResult.response.action.id}`);
+          console.log(`Action Type: ${turnResult.response.action.type}`);
+          console.log(`Expires At:  ${turnResult.response.action.expires_at}`);
           console.log("Summary:");
-          console.dir(turnResult.response.displaySummary, { depth: null });
+          console.dir(turnResult.response.action.summary, { depth: null });
           console.log("--------------------------------------------------");
           console.log(
-            `To execute: /confirm ${turnResult.response.actionId} (or /confirm)`,
+            `To execute: /confirm ${turnResult.response.action.id} (or /confirm)`,
           );
           console.log(
-            `To cancel:  /cancel ${turnResult.response.actionId} (or /cancel)`,
+            `To cancel:  /cancel ${turnResult.response.action.id} (or /cancel)`,
           );
           console.log("--------------------------------------------------");
         }
