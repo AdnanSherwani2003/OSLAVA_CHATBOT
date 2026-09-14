@@ -1,4 +1,4 @@
-import { buildApp } from "./app.js";
+import { buildApp } from "./application.js";
 import { getConfig } from "./config/env.js";
 import { logger } from "./observability/logger.js";
 import { closePool } from "./persistence/database.js";

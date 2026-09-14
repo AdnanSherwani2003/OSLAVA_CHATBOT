@@ -4,7 +4,7 @@ import { getPool } from "../../../src/persistence/database.js";
 import { createPersistence } from "../../../src/persistence/persistence.factory.js";
 import { InMemoryChatStore } from "../../../src/persistence/memory/in-memory-store.js";
 import { runMigrations } from "../../../src/persistence/migrate.js";
-import { buildApp } from "../../../src/app.js";
+import { buildApp } from "../../../src/application.js";
 
 describe("Persistence Mode & In-Memory Persistence", () => {
   const testUserId = "11111111-1111-1111-1111-111111111111";

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { buildApp } from "../../../src/app.js";
+import { buildApp } from "../../../src/application.js";
 import { parseConfig } from "../../../src/config/env.js";
 import { rateLimiterInstance } from "../../../src/api/middleware/rate-limiter.js";
 import type { FastifyInstance } from "fastify";

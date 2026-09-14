@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
-import { buildApp } from "../../../src/app.js";
+import { buildApp } from "../../../src/application.js";
 import { parseConfig, setCachedConfig } from "../../../src/config/env.js";
 import { AuthService } from "../../../src/auth/auth.service.js";
 import { ConversationService } from "../../../src/context/conversation.service.js";

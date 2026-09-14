@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { buildApp } from "../../../src/app.js";
+import { buildApp } from "../../../src/application.js";
 import { parseConfig } from "../../../src/config/env.js";
 import { AuthService } from "../../../src/auth/auth.service.js";
 import type { FastifyInstance } from "fastify";

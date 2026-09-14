@@ -240,7 +240,7 @@ All API errors adhere to a uniform structure:
 ```
 oslava-admin-ai/
 ├── src/
-│   ├── app.ts                                 # Fastify application factory
+│   ├── application.ts                         # Fastify application factory
 │   ├── server.ts                              # Entrypoint & graceful shutdown
 │   ├── config/
 │   │   └── env.ts                             # Strict Zod env validation
