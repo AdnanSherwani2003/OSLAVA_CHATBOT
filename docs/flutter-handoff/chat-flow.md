@@ -1,5 +1,8 @@
 # Flutter Handoff: Chat Messaging & UI State Flow
 
+- **Production API**: `https://oslava-chatbot.vercel.app`
+- **Authoritative Contract**: [API-CONTRACT-V1.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/API-CONTRACT-V1.md)
+
 ## 1. Creating and Loading Sessions
 
 ### Initialize or Resume a Chat Session
@@ -119,3 +122,8 @@ When an action is proposed:
 }
 ```
 **UI Action**: Display the confirmation card with **Confirm** and **Cancel** buttons. (See `confirmation-flow.md`).
+
+> [!WARNING]
+> Natural-language replies such as `"yes"`, `"okay"`, `"confirm"`, or `"do it"` must **NEVER** cause Flutter to call the confirm endpoint.
+> Only an explicit tap on the Confirmation UI button may call `/v1/chat/actions/:actionId/confirm`.
+

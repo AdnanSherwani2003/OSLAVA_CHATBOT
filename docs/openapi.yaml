@@ -15,10 +15,10 @@ tags:
     description: Health, readiness, and monitoring probes for infrastructure and orchestration.
 
 servers:
+  - url: https://oslava-chatbot.vercel.app
+    description: Production Environment
   - url: http://localhost:3000
     description: Local Development / Staging Environment (Use http://10.0.2.2:3000 on Android Emulator)
-  - url: https://api-chatbot.oslava.com
-    description: Production Environment
 
 paths:
   # ==========================================================================

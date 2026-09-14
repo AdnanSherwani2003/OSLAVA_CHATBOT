@@ -1,5 +1,8 @@
 # Flutter Handoff: Concrete Response DTO Examples
 
+- **Production API**: `https://oslava-chatbot.vercel.app`
+- **Authoritative Contract**: [API-CONTRACT-V1.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/API-CONTRACT-V1.md)
+
 This document provides exact, copy-pasteable JSON responses for every response type in the Oslava Admin AI Chatbot API.
 
 All response envelopes contain `request_id` and, where applicable, `session_id`, `message_id`, `response`, and `session_state`.

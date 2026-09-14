@@ -1,19 +1,41 @@
 # Oslava Admin AI Chatbot — Flutter Handoff Package
 
-Welcome to the Flutter Developer handoff package for the Oslava Admin AI Chatbot backend.
+Welcome to the Flutter developer handoff package for the standalone Oslava Admin AI Chatbot backend.
 
-This package contains everything you need to integrate the chatbot directly into the Flutter mobile application without inspecting or modifying backend source code.
+This directory is the official integration package for incorporating the chatbot into the Oslava Flutter mobile application.
 
-## Package Contents
+---
 
-0. **[Authoritative Frozen V1 API Contract](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/API-CONTRACT-V1.md)** — **The single authoritative master contract specification for all 10 endpoints.**
-1. [Authentication Guide](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/authentication.md) — Supabase JWT forwarding and token lifecycle.
-2. [Chat Flow & UI Routing](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/chat-flow.md) — How messages, entity disambiguation, and response types work.
-3. [Confirmation Card Flow](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/confirmation-flow.md) — Staging write intents, rendering confirmation cards, and executing mutations.
-4. [Error Codes Contract](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/error-codes.md) — Complete specification of all possible backend error codes and recommended UI behavior.
-5. [Concrete Response DTOs](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/response-examples.md) — Copy-pasteable JSON examples for every response schema.
-6. [OpenAPI Quick Reference](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/openapi-reference.md) — Summary of all frozen V1 endpoints.
+## Production API
 
-## Base URLs
-- **Local Staging**: `http://localhost:3000` (or `http://10.0.2.2:3000` on Android Emulator)
-- **Hosted Staging**: Provided by devops team via environment config
+- **Production Base URL**: `https://oslava-chatbot.vercel.app`
+- **Local Dev / Android Emulator**: `http://10.0.2.2:3000` (or `http://localhost:3000` on iOS Simulator)
+
+Configure this through your Flutter application environment/config constants (e.g. `AppEnvironment.chatbotBaseUrl`). Never hardcode secrets.
+
+---
+
+## Authoritative Contract Rule
+
+> [!IMPORTANT]
+> **Authoritative Contract**: [API-CONTRACT-V1.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/API-CONTRACT-V1.md)
+>
+> `API-CONTRACT-V1.md` is the single source of truth for all 10 frozen V1 HTTP endpoints, status codes, and request/response JSON envelopes.
+> **If any supporting document, guide, or example ever conflicts with `API-CONTRACT-V1.md`, the frozen API contract wins.**
+
+---
+
+## START HERE: Reading Order
+
+Follow these documents in order for a seamless, defect-free integration:
+
+1. **[FLUTTER-INTEGRATION-GUIDE.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/FLUTTER-INTEGRATION-GUIDE.md)** — **Primary step-by-step developer guide** covering production configuration, Supabase authentication reuse, full chat lifecycle, message handling, confirmation flows, error strategies, and network UX.
+2. **[API-CONTRACT-V1.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/API-CONTRACT-V1.md)** — **Authoritative Frozen V1 REST API specification** with master definitions for all 10 endpoints, schemas, and error envelopes.
+3. **[authentication.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/authentication.md)** — Supabase JWT forwarding, role validation (`ACTIVE` `ADMIN`/`SUPER_ADMIN`), and automatic 401 session refresh handling.
+4. **[chat-flow.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/chat-flow.md)** — Message turn dispatching, UI branching by `response.type`, and entity disambiguation.
+5. **[confirmation-flow.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/confirmation-flow.md)** — Two-phase mutation staging, rendering confirmation cards, and executing explicit confirm/cancel calls.
+6. **[error-codes.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/error-codes.md)** — Exhaustive dictionary of all backend error codes and recommended Flutter UX behaviors.
+7. **[response-examples.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/response-examples.md)** — Exact copy-pasteable JSON response DTOs for every response type.
+8. **[openapi-reference.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/openapi-reference.md)** — Quick reference table summarizing methods, paths, and headers.
+9. **[../openapi.yaml](file:///d:/OSLAVA_CHATBOT/docs/openapi.yaml)** — Full machine-readable OpenAPI 3.1.0 specification.
+10. **[FLUTTER-DEVELOPER-CHECKLIST.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/FLUTTER-DEVELOPER-CHECKLIST.md)** — Comprehensive pre-release verification checklist for Flutter engineers.

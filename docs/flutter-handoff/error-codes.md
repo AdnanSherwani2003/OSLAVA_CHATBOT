@@ -1,6 +1,9 @@
 # Flutter Handoff: Error Envelope & Error Codes Contract
 
-All API errors adhere to one single uniform JSON structure:
+- **Production API**: `https://oslava-chatbot.vercel.app`
+- **Authoritative Contract**: [API-CONTRACT-V1.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/API-CONTRACT-V1.md)
+
+All API errors adhere to one single uniform JSON structure. Always capture and log `request_id` for diagnostics.
 
 ```json
 {

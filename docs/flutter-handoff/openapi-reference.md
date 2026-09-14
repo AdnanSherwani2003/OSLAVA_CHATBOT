@@ -1,7 +1,13 @@
 # Flutter Handoff: OpenAPI Quick Reference
 
-The full machine-readable specification is available at [docs/openapi.yaml](file:///d:/OSLAVA_CHATBOT/docs/openapi.yaml).
-The authoritative frozen V1 human-readable guide is available at [docs/flutter-handoff/API-CONTRACT-V1.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/API-CONTRACT-V1.md).
+- **Production API**: `https://oslava-chatbot.vercel.app`
+- **Authoritative Contract**: [API-CONTRACT-V1.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/API-CONTRACT-V1.md)
+- **Machine-Readable OpenAPI 3.1.0 Spec**: [openapi.yaml](file:///d:/OSLAVA_CHATBOT/docs/openapi.yaml)
+
+## Base URLs
+- **Production**: `https://oslava-chatbot.vercel.app`
+- **Local Dev / Android Emulator**: `http://10.0.2.2:3000`
+- **Local Dev / iOS Simulator**: `http://localhost:3000`
 
 ## Endpoint Summary
 

@@ -2,6 +2,14 @@
 
 The Oslava Admin AI Chatbot does **NOT** maintain its own user accounts or separate login endpoints. It authenticates callers strictly by validating existing Supabase Auth JWT access tokens.
 
+## Base URLs
+- **Production API**: `https://oslava-chatbot.vercel.app`
+- **Local Dev / Android Emulator**: `http://10.0.2.2:3000`
+- **Local Dev / iOS Simulator**: `http://localhost:3000`
+
+> [!NOTE]
+> Never bundle backend secrets (`GROQ_API_KEY`, `DATABASE_URL`, Neon credentials, Supabase `service_role` key, or Vercel secrets) into the Flutter application. Flutter only forwards the active user's Supabase session access token.
+
 ## 1. Forwarding the Token
 
 Whenever sending an HTTP request to the chatbot API, retrieve the user's active session token from the existing Supabase Flutter client:

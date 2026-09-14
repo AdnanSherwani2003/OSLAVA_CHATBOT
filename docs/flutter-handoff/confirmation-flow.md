@@ -1,27 +1,33 @@
 # Flutter Handoff: Confirmation Card & Two-Phase Mutation Flow
 
+- **Production API**: `https://oslava-chatbot.vercel.app`
+- **Authoritative Contract**: [API-CONTRACT-V1.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/API-CONTRACT-V1.md)
+
 The Oslava Admin AI Chatbot uses an **absolute two-phase write safety model**.
 
 > [!IMPORTANT]
 > The AI model **NEVER** mutates database state directly.
 > Asking the bot to "promote Arif" merely creates a **pending action** with status `PENDING`.
 > Only an explicit HTTP POST request from the Flutter app executing the confirmation endpoint can perform the database write.
+>
+> **Natural-language replies such as "yes", "okay", "confirm", or "do it" must NEVER cause Flutter to call the confirm endpoint.** Only an explicit user tap on the UI Confirmation button may call `/confirm`.
 
 ---
 
 ## 1. The Confirmation Card Component
 
-When `type === "confirmation_required"` is received, render a card containing:
+When `type === "confirmation_required"` is received (or restored via `GET /v1/chat/sessions/:sessionId/action/pending`), render a card containing:
 1. **Action Title**:
    - `change_worker_category`: "Confirm Worker Category Change"
    - `publish_event`: "Confirm Publish Event"
    - `complete_event`: "Confirm Complete Event"
    - `close_event`: "Confirm Close Event"
-2. **Details Summary**: From `displaySummary`.
-3. **Countdown Timer**: Using `expiresAt` (actions expire in 10 minutes).
+2. **Details Summary**: From `response.action.summary` (or `pending_action.display_summary` when restored from `/pending`).
+3. **Countdown Timer**: Using `expires_at` (actions expire in 10 minutes from creation).
 4. **Action Buttons**:
    - Primary: **Confirm Change**
    - Secondary: **Cancel**
+5. **Duplicate Click Protection**: Both buttons must be disabled immediately upon user tap while the request is in flight.
 
 ---
 

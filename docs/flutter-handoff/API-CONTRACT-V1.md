@@ -12,9 +12,9 @@
 ## 1. Overview & General Standards
 
 ### Base URLs
+- **Production**: `https://oslava-chatbot.vercel.app` (configured via app environment)
 - **Local Dev / Android Emulator**: `http://10.0.2.2:3000`
 - **Local Dev / iOS Simulator**: `http://localhost:3000`
-- **Staging / Production**: `https://api-chatbot.oslava.com` (configured via app environment)
 
 ### Authentication
 All application endpoints (except `/healthz`, `/readyz`, and `/metrics`) require the active admin's Supabase Access Token in the standard HTTP `Authorization` header:

@@ -1,6 +1,15 @@
 # Oslava Admin AI Chatbot — Flutter Integration Guide
 
-This guide is designed for the Flutter developer integrating the Oslava Admin AI Chatbot into the mobile application.
+> [!IMPORTANT]
+> **Primary Guides**:
+> - **[FLUTTER-INTEGRATION-GUIDE.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/FLUTTER-INTEGRATION-GUIDE.md)**: Comprehensive, step-by-step practical integration manual.
+> - **[API-CONTRACT-V1.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/API-CONTRACT-V1.md)**: Authoritative frozen V1 master contract.
+> - **[FLUTTER-DEVELOPER-CHECKLIST.md](file:///d:/OSLAVA_CHATBOT/docs/flutter-handoff/FLUTTER-DEVELOPER-CHECKLIST.md)**: Pre-release verification checklist.
+
+## Base URLs
+- **Production API**: `https://oslava-chatbot.vercel.app`
+- **Local Dev / Android Emulator**: `http://10.0.2.2:3000`
+- **Local Dev / iOS Simulator**: `http://localhost:3000`
 
 ---
 
@@ -64,7 +73,7 @@ When the user types a message in Flutter, send:
 ```http
 POST /v1/chat/sessions/:sessionId/messages
 {
-  "message": "Promote Arif to tier A because of great performance"
+  "message": "Promote Arif to category A because of exemplary performance"
 }
 ```
 
@@ -86,13 +95,15 @@ Render text bubble      required"              Render confirmation card
                    Render selectable chips     with Confirm / Cancel buttons
 ```
 
-### UI Types:
-1. `type: "message"`: Standard conversational response. Render as an assistant speech bubble.
-2. `type: "entity_selection_required"`: Disambiguation prompt. Render `question` and a list of selectable chip/list options. When the user taps an option, send its label or ordinal back as a chat message.
-3. `type: "confirmation_required"`: Staged mutation. Render a dedicated confirmation dialog/card displaying the summary, expiration timer, and two action buttons: **Confirm** and **Cancel**.
+### Supported Response Types:
+1. `type: "message"`: Standard conversational response. Render as an assistant speech bubble with Markdown support.
+2. `type: "entity_selection_required"`: Disambiguation prompt. Render `content` and selectable chip/list options from `selection.options`. When the user taps an option, send its `display_name` back as the next chat message.
+3. `type: "confirmation_required"`: Staged mutation. Render a dedicated confirmation card displaying the summary, expiration timer, and two action buttons: **Confirm** and **Cancel**.
+4. `type: "action_completed"`: Result of explicit confirmation. Render green success confirmation status.
+5. `type: "action_cancelled"`: Result of explicit cancellation. Render grey cancellation notice.
 
 > [!WARNING]
-> **CRITICAL**: Do **NOT** attempt to confirm an action by sending the word `"yes"` or `"confirm"` through `POST /messages`.
+> **CRITICAL**: Do **NOT** attempt to confirm an action by sending conversational words like `"yes"`, `"okay"`, or `"confirm"` through `POST /messages`.
 > Mutations can **ONLY** be executed by calling the dedicated `POST /v1/chat/actions/:actionId/confirm` endpoint.
 
 ---
@@ -103,18 +114,32 @@ When `type === "confirmation_required"` is received:
 
 ```json
 {
-  "type": "confirmation_required",
-  "actionId": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
-  "actionType": "change_worker_category",
-  "displaySummary": {
-    "workerName": "Arif Ahmed",
-    "workerNumber": 1002,
-    "currentCategory": "B",
-    "newCategory": "A",
-    "reason": "Demonstrated exemplary service"
+  "request_id": "req_55b0a216d12f45888d30e3184f4f4699",
+  "session_id": "2ff5d0c5-8d62-48a0-9cc4-47ea818cf0f9",
+  "message_id": "b304cbca-e2e7-402b-a36c-92d6e3c63d59",
+  "response": {
+    "type": "confirmation_required",
+    "content": "I have staged a category change for worker Arif Ahmed from B to A.",
+    "action": {
+      "id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
+      "type": "change_worker_category",
+      "status": "PENDING",
+      "expires_at": "2026-09-14T02:15:00.000Z",
+      "summary": {
+        "workerName": "Arif Ahmed",
+        "workerNumber": 1002,
+        "currentCategory": "B",
+        "newCategory": "A",
+        "reason": "Exemplary performance during banquet"
+      }
+    }
   },
-  "content": "I have staged a category change for worker Arif Ahmed...",
-  "expiresAt": "2026-09-13T01:30:00.000Z"
+  "session_state": {
+    "current_event_id": null,
+    "current_event_label": null,
+    "current_worker_id": "22222222-2222-4222-8222-222222222222",
+    "current_worker_label": "Arif Ahmed"
+  }
 }
 ```
 
@@ -126,12 +151,33 @@ final confirmRes = await http.post(
 );
 ```
 
-Response:
+Response (`HTTP 200 OK`):
 ```json
 {
-  "action_id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
-  "status": "SUCCEEDED",
-  "message": "Action 'change_worker_category' completed successfully."
+  "request_id": "req_d39589d107a94488be6dae766e4a689b",
+  "session_id": "2ff5d0c5-8d62-48a0-9cc4-47ea818cf0f9",
+  "response": {
+    "type": "action_completed",
+    "content": "Action 'change_worker_category' completed successfully.",
+    "action": {
+      "id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
+      "type": "change_worker_category",
+      "status": "SUCCEEDED",
+      "summary": {
+        "workerName": "Arif Ahmed",
+        "workerNumber": 1002,
+        "currentCategory": "B",
+        "newCategory": "A",
+        "reason": "Exemplary performance during banquet"
+      },
+      "result": {
+        "worker_id": "22222222-2222-4222-8222-222222222222",
+        "old_category": "B",
+        "new_category": "A",
+        "status": "SUCCESS"
+      }
+    }
+  }
 }
 ```
 
@@ -147,12 +193,27 @@ final cancelRes = await http.post(
 );
 ```
 
-Response:
+Response (`HTTP 200 OK`):
 ```json
 {
-  "action_id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
-  "status": "CANCELLED",
-  "message": "Action 'change_worker_category' was cancelled."
+  "request_id": "req_45690184b23847e38466bbd08a5c43d2",
+  "session_id": "2ff5d0c5-8d62-48a0-9cc4-47ea818cf0f9",
+  "response": {
+    "type": "action_cancelled",
+    "content": "Action 'change_worker_category' was cancelled.",
+    "action": {
+      "id": "baa8a85d-e77c-40fc-ac31-29e3959c4afa",
+      "type": "change_worker_category",
+      "status": "CANCELLED",
+      "summary": {
+        "workerName": "Arif Ahmed",
+        "workerNumber": 1002,
+        "currentCategory": "B",
+        "newCategory": "A",
+        "reason": "Exemplary performance during banquet"
+      }
+    }
+  }
 }
 ```
 
@@ -174,9 +235,13 @@ Every non-2xx response from the chatbot returns a single standardized JSON envel
 ```
 
 ### Key Error Codes for Flutter:
+- `AUTH_REQUIRED` (401): Missing authorization header. Redirect to login.
 - `AUTH_INVALID` (401): Refresh Supabase session and retry.
 - `ROLE_FORBIDDEN` (403): User is not an active Admin. Show access denied notice.
+- `ACCOUNT_RESTRICTED` (403): Admin account is suspended or inactive.
 - `ACTION_STALE` (409): Entity changed out-of-band. Dismiss confirmation card and refresh conversation.
 - `ACTION_EXPIRED` (400): 10-minute confirmation TTL lapsed. Prompt user to re-request action.
 - `ACTION_ALREADY_RESOLVED` (409): Action was already executed or cancelled. Disable buttons.
 - `PENDING_ACTION_EXISTS` (409): Staged action already exists. Show pending action card or request cancellation.
+- `MODEL_UNAVAILABLE` / `MODEL_RATE_LIMITED` / `MODEL_TIMEOUT` (503/429/504): `retryable: true`. Offer user retry affordance.
+- `INTERNAL_ERROR` (500): Server error. Log `request_id` for investigation.
