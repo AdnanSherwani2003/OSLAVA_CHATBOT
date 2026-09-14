@@ -1,3 +1,6 @@
+// Required for Vercel zero-config Fastify entrypoint detection.
+// The actual Fastify instance is created by buildApp() in application.ts.
+import "fastify";
 import { buildApp } from "./application.js";
 import { getConfig } from "./config/env.js";
 import { logger } from "./observability/logger.js";
