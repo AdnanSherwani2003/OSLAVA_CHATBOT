@@ -34,4 +34,64 @@ describe("buildSystemPrompt: Operational Timezone & Business Date", () => {
     expect(prompt).toContain('When searching events for "tomorrow", pass start_date: "2026-09-14", end_date: "2026-09-14".');
     expect(prompt).toContain('When searching events for "yesterday", pass start_date: "2026-09-12", end_date: "2026-09-12".');
   });
+
+  describe("V1 Capability Boundaries & Proactive Offerings", () => {
+    it("strictly enumerates supported read tools and write intent tools", () => {
+      const prompt = buildSystemPrompt(null);
+
+      expect(prompt).toContain("=== CAPABILITIES & BOUNDARIES (STRICT V1 BOUNDARIES) ===");
+      expect(prompt).toContain("get_dashboard");
+      expect(prompt).toContain("search_events");
+      expect(prompt).toContain("get_event_details");
+      expect(prompt).toContain("search_workers");
+      expect(prompt).toContain("get_worker_details");
+      expect(prompt).toContain("get_worker_history");
+      expect(prompt).toContain("get_event_report");
+
+      expect(prompt).toContain("change_worker_category");
+      expect(prompt).toContain("publish_event");
+      expect(prompt).toContain("complete_event");
+      expect(prompt).toContain("close_event");
+    });
+
+    it("explicitly forbids all unsupported write operations", () => {
+      const prompt = buildSystemPrompt(null);
+
+      expect(prompt).toContain("EXPLICITLY UNSUPPORTED / OUT-OF-SCOPE MUTATIONS & ACTIONS:");
+      expect(prompt).toContain("Assigning workers to events, shifts, or teams");
+      expect(prompt).toContain("Removing, reassigning, or replacing workers");
+      expect(prompt).toContain("Creating new events");
+      expect(prompt).toContain("Editing event details, venues, or timings");
+      expect(prompt).toContain("Canceling events");
+      expect(prompt).toContain("Opening, closing, or adjusting recruitment status");
+      expect(prompt).toContain("Modifying staffing requirements, headcounts, or allowances");
+      expect(prompt).toContain("Registering workers or approving pending worker registrations");
+      expect(prompt).toContain("Deleting any data");
+    });
+
+    it("forbids proactive offering of unsupported actions in closing sentences", () => {
+      const prompt = buildSystemPrompt(null);
+
+      expect(prompt).toContain("PROACTIVE OFFERING & CLOSING SENTENCE RULES (CRITICAL):");
+      expect(prompt).toContain("NEVER say \"you may assign additional workers\"");
+      expect(prompt).toContain("NEVER say \"wish to adjust recruitment\"");
+      expect(prompt).toContain("NEVER offer to resolve the shortage, adjust recruitment, or assign workers.");
+    });
+
+    it("restricts suggested follow-up actions to supported read operations", () => {
+      const prompt = buildSystemPrompt(null);
+
+      expect(prompt).toContain('"view staffing details"');
+      expect(prompt).toContain('"view event report"');
+      expect(prompt).toContain('"inspect workers"');
+      expect(prompt).toContain('"inspect event details"');
+    });
+
+    it("mandates exact refusal sentence for unsupported action requests", () => {
+      const prompt = buildSystemPrompt(null);
+
+      expect(prompt).toContain("UNSUPPORTED ACTION REFUSAL RULE:");
+      expect(prompt).toContain('"That action isn\'t available through the chatbot yet."');
+    });
+  });
 });
