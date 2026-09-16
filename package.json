@@ -24,6 +24,9 @@
   ],
   "author": "",
   "license": "UNLICENSED",
+  "engines": {
+    "node": "22.x"
+  },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
     "@supabase/supabase-js": "^2.49.1",
@@ -31,7 +34,7 @@
     "fastify": "^5.2.1",
     "fastify-plugin": "^6.0.0",
     "groq-sdk": "^1.6.0",
-    "openai": "^7.15.0",
+    "openai": "7.15.0",
     "pg": "^8.23.0",
     "pino": "^9.6.0",
     "zod": "^3.24.2",

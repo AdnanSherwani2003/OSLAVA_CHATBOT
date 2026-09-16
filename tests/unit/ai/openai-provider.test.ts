@@ -1,4 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  AuthenticationError,
+  InternalServerError,
+  RateLimitError,
+} from "openai";
 import { OpenAIProvider } from "../../../src/ai/openai.provider.js";
 import { setCachedConfig, parseConfig } from "../../../src/config/env.js";
 import {
@@ -227,5 +234,72 @@ describe("OpenAIProvider", () => {
         messages: [{ role: "user", content: "Hello" }],
       }),
     ).rejects.toThrow(ModelInvalidResponseError);
+  });
+
+  it("maps real OpenAI SDK error instances correctly", async () => {
+    setCachedConfig(
+      parseConfig({
+        SUPABASE_URL: "https://test.supabase.co",
+        SUPABASE_PUBLISHABLE_KEY: "test-key",
+        OPENAI_API_KEY: "sk-mock-test-key",
+      }),
+    );
+
+    const provider = new OpenAIProvider();
+
+    // 1. RateLimitError
+    const rateLimitErr = new RateLimitError(
+      429,
+      { message: "rate limited" },
+      "rate limited",
+      new Headers(),
+    );
+    let mockCreate = vi.fn().mockRejectedValue(rateLimitErr);
+    (provider as any).client = { chat: { completions: { create: mockCreate } } };
+    await expect(
+      provider.chat({ messages: [{ role: "user", content: "Hi" }] }),
+    ).rejects.toThrow(ModelRateLimitedError);
+
+    // 2. InternalServerError
+    const serverErr = new InternalServerError(
+      500,
+      { message: "internal error" },
+      "internal error",
+      new Headers(),
+    );
+    mockCreate = vi.fn().mockRejectedValue(serverErr);
+    (provider as any).client = { chat: { completions: { create: mockCreate } } };
+    await expect(
+      provider.chat({ messages: [{ role: "user", content: "Hi" }] }),
+    ).rejects.toThrow(ModelUnavailableError);
+
+    // 3. APIConnectionTimeoutError
+    const timeoutErr = new APIConnectionTimeoutError({ message: "connection timeout" });
+    mockCreate = vi.fn().mockRejectedValue(timeoutErr);
+    (provider as any).client = { chat: { completions: { create: mockCreate } } };
+    await expect(
+      provider.chat({ messages: [{ role: "user", content: "Hi" }] }),
+    ).rejects.toThrow(ModelTimeoutError);
+
+    // 4. AuthenticationError
+    const authErr = new AuthenticationError(
+      401,
+      { message: "invalid key" },
+      "invalid key",
+      new Headers(),
+    );
+    mockCreate = vi.fn().mockRejectedValue(authErr);
+    (provider as any).client = { chat: { completions: { create: mockCreate } } };
+    await expect(
+      provider.chat({ messages: [{ role: "user", content: "Hi" }] }),
+    ).rejects.toThrow(ModelUnavailableError);
+
+    // 5. APIConnectionError
+    const connErr = new APIConnectionError({ message: "connection refused" });
+    mockCreate = vi.fn().mockRejectedValue(connErr);
+    (provider as any).client = { chat: { completions: { create: mockCreate } } };
+    await expect(
+      provider.chat({ messages: [{ role: "user", content: "Hi" }] }),
+    ).rejects.toThrow(ModelUnavailableError);
   });
 });

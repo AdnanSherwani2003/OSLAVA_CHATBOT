@@ -1,4 +1,16 @@
-import OpenAI from "openai";
+import {
+  OpenAI,
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  AuthenticationError,
+  InternalServerError,
+  RateLimitError,
+} from "openai";
+import type {
+  ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionTool,
+  ChatCompletionToolChoiceOption,
+} from "openai/resources/chat/completions";
 import { getConfig } from "../config/env.js";
 import {
   ModelInvalidResponseError,
@@ -32,7 +44,7 @@ export class OpenAIProvider implements ModelProvider {
     const client = this.getClient();
     const timeoutMs = options.timeoutMs ?? config.OPENAI_TIMEOUT_MS;
 
-    const requestPayload: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
+    const requestPayload: ChatCompletionCreateParamsNonStreaming = {
       model: config.OPENAI_MODEL,
       messages: options.messages.map((m) => {
         const msg: any = {
@@ -58,10 +70,10 @@ export class OpenAIProvider implements ModelProvider {
     };
 
     if (options.tools && options.tools.length > 0) {
-      requestPayload.tools = options.tools as OpenAI.Chat.ChatCompletionTool[];
+      requestPayload.tools = options.tools as ChatCompletionTool[];
       requestPayload.parallel_tool_calls = false;
       if (options.toolChoice) {
-        requestPayload.tool_choice = options.toolChoice as OpenAI.Chat.ChatCompletionToolChoiceOption;
+        requestPayload.tool_choice = options.toolChoice as ChatCompletionToolChoiceOption;
       }
     }
 
@@ -133,7 +145,7 @@ export class OpenAIProvider implements ModelProvider {
         options.signal.removeEventListener("abort", abortHandler);
       }
 
-      if (err.name === "AbortError" || err instanceof OpenAI.APIConnectionTimeoutError) {
+      if (err.name === "AbortError" || err instanceof APIConnectionTimeoutError) {
         throw new ModelTimeoutError(`OpenAI request timed out after ${timeoutMs}ms.`);
       }
 
@@ -142,11 +154,11 @@ export class OpenAIProvider implements ModelProvider {
       }
 
       const status = err.status || err.statusCode;
-      const isRateLimit = status === 429 || err instanceof OpenAI.RateLimitError;
+      const isRateLimit = status === 429 || err instanceof RateLimitError;
       const isServerError =
-        (status >= 500 && status < 600) || err instanceof OpenAI.InternalServerError;
+        (status >= 500 && status < 600) || err instanceof InternalServerError;
       const isNetworkError =
-        err instanceof OpenAI.APIConnectionError ||
+        err instanceof APIConnectionError ||
         err.code === "ECONNRESET" ||
         err.code === "ETIMEDOUT" ||
         err.message?.includes("network") ||
@@ -160,7 +172,7 @@ export class OpenAIProvider implements ModelProvider {
         throw new ModelUnavailableError(err.message || "OpenAI service unavailable.");
       }
 
-      if (status === 401 || err instanceof OpenAI.AuthenticationError) {
+      if (status === 401 || err instanceof AuthenticationError) {
         logger.error(
           { status, message: err.message },
           "[OpenAIProvider] Authentication failure. Check OPENAI_API_KEY configuration.",
