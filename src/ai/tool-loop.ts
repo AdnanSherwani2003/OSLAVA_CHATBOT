@@ -7,7 +7,7 @@ import { ITraceRepository } from "../persistence/repositories/trace.repository.j
 import { logger } from "../observability/logger.js";
 import { metrics } from "../observability/metrics.js";
 import { getConfig } from "../config/env.js";
-import { ModelTimeoutError } from "../domain/errors.js";
+import { ModelInvalidResponseError, ModelTimeoutError } from "../domain/errors.js";
 import {
   ModelMessage,
   ModelProvider,
@@ -16,6 +16,7 @@ import { toolRegistry } from "./tool-registry.js";
 import { PendingActionRecord } from "../actions/action.types.js";
 import { WriteIntentResult } from "../tools/tool.types.js";
 import { TurnPlan, turnPlanner } from "./turn-planner.js";
+import { type V1ToolName } from "./v1-manifest.js";
 
 export interface ToolLoopExecutionParams {
   modelProvider: ModelProvider;
@@ -89,6 +90,7 @@ export class ToolLoop {
     // Track executed tools and cache successful read tool outputs for deduplication
     const readToolCache = new Map<string, any>();
     const executedToolNames: string[] = [];
+    const rejectedOutOfPlanTools: string[] = [];
     let omissionRecoveryAttempts = 0;
     const maxOmissionRecoveryAttempts = 2;
 
@@ -105,7 +107,13 @@ export class ToolLoop {
       return "openai";
     };
 
-    const toolDefinitions = toolRegistry.getToolDefinitions();
+    // Filter tools to allowed turn tools if specified by TurnPlan (Requirement 8 & 9)
+    let toolDefinitions = toolRegistry.getToolDefinitions();
+    if (turnPlan && turnPlan.allowedTools) {
+      const allowedSet = new Set<string>(turnPlan.allowedTools);
+      toolDefinitions = toolDefinitions.filter((td) => allowedSet.has(td.function.name));
+    }
+    const hasTools = toolDefinitions.length > 0;
 
     while (toolCallCount < maxToolCalls) {
       // Bounded turn deadline check before model call
@@ -124,8 +132,8 @@ export class ToolLoop {
       const modelCallStart = Date.now();
       const response = await modelProvider.chat({
         messages,
-        tools: toolDefinitions,
-        toolChoice: "auto",
+        tools: hasTools ? toolDefinitions : undefined,
+        toolChoice: hasTools ? "auto" : undefined,
         timeoutMs: modelTimeoutMs,
       });
       metrics.recordModelCall(Date.now() - modelCallStart);
@@ -144,7 +152,7 @@ export class ToolLoop {
 
       // If model produced no tool calls, verify completeness
       if (!response.toolCalls || response.toolCalls.length === 0) {
-        if (turnPlan && omissionRecoveryAttempts < maxOmissionRecoveryAttempts) {
+        if (turnPlan) {
           const completeness = turnPlanner.validateTurnCompleteness(
             turnPlan,
             executedToolNames,
@@ -152,33 +160,66 @@ export class ToolLoop {
             response.content || "",
           );
 
-          if (!completeness.isComplete && completeness.missingTool) {
-            omissionRecoveryAttempts++;
-            metrics.recordToolOmissionPrevented();
-            logger.warn(
+          if (!completeness.isComplete) {
+            if (omissionRecoveryAttempts < maxOmissionRecoveryAttempts && completeness.missingTool) {
+              omissionRecoveryAttempts++;
+              metrics.recordToolOmissionPrevented();
+              logger.warn(
+                {
+                  requestId,
+                  sessionId,
+                  missingTool: completeness.missingTool,
+                  omissionRecoveryAttempts,
+                },
+                "[ToolLoop] Intercepted premature response with missing tool objective; re-prompting model",
+              );
+
+              // Append assistant draft and deterministic reminder
+              messages.push({
+                role: "assistant",
+                content: response.content || null,
+              });
+              messages.push({
+                role: "user",
+                content:
+                  completeness.instruction ||
+                  `[System: You must call tool '${completeness.missingTool}' before providing your final response.]`,
+              });
+              continue;
+            }
+
+            // Bounded recovery attempts exhausted and plan is STILL incomplete!
+            // Requirement 5: MUST FAIL CLOSED!
+            logger.error(
               {
                 requestId,
                 sessionId,
+                missingObjective: completeness.missingObjective,
                 missingTool: completeness.missingTool,
                 omissionRecoveryAttempts,
+                executedTools: executedToolNames,
               },
-              "[ToolLoop] Intercepted premature response with missing tool objective; re-prompting model",
+              "[ToolLoop] Required TurnPlan objectives unsatisfied after recovery; failing closed",
             );
-
-            // Append assistant draft and deterministic reminder
-            messages.push({
-              role: "assistant",
-              content: response.content || null,
-            });
-            messages.push({
-              role: "user",
-              content:
-                completeness.instruction ||
-                `[System: You must call tool '${completeness.missingTool}' before providing your final response.]`,
-            });
-            continue;
+            throw new ModelInvalidResponseError(
+              `AI model failed to complete required objective '${completeness.missingObjective}' (${completeness.missingTool}).`,
+            );
           }
         }
+
+        // Complete! Log safe structured turn summary (Requirement 15)
+        logger.info(
+          {
+            requestId,
+            sessionId,
+            plannedObjectives: turnPlan?.objectives || [],
+            requiredTools: turnPlan?.requiredReadTools || [],
+            allowedTools: turnPlan?.allowedTools || [],
+            executedTools: executedToolNames,
+            rejectedOutOfPlanTools,
+          },
+          "[ToolLoop] Turn execution complete",
+        );
 
         return {
           finalContent: response.content || "",
@@ -226,6 +267,24 @@ export class ToolLoop {
             name: toolName,
             content: JSON.stringify({
               error: "Invalid JSON format in tool arguments.",
+            }),
+          });
+          continue;
+        }
+
+        // 0. Check TurnPlan Tool Allowlist (Requirement 8 & 9)
+        if (turnPlan?.allowedTools && !turnPlan.allowedTools.includes(toolName as V1ToolName)) {
+          rejectedOutOfPlanTools.push(toolName);
+          logger.warn(
+            { requestId, sessionId, toolName, allowedTools: turnPlan.allowedTools },
+            "[ToolLoop] Intercepted out-of-plan tool call not permitted by TurnPlan; rejecting before execution",
+          );
+          messages.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            name: toolName,
+            content: JSON.stringify({
+              error: `Tool '${toolName}' is not permitted for the current request. Allowed tools: ${turnPlan.allowedTools.join(", ")}`,
             }),
           });
           continue;
@@ -349,6 +408,7 @@ export class ToolLoop {
         }
 
         // 5. Execute tool with bounded timeout
+        executedToolNames.push(toolName);
         const startTime = new Date();
         let executionStatus: "SUCCESS" | "ERROR" = "SUCCESS";
         let errorCode: string | null = null;
@@ -384,7 +444,6 @@ export class ToolLoop {
             executionStatus = "ERROR";
             errorCode = result.error?.code || "TOOL_ERROR";
           } else {
-            executedToolNames.push(toolName);
             if (sig) {
               readToolCache.set(sig, result);
             }
@@ -506,6 +565,32 @@ export class ToolLoop {
     }
 
     // Force final response if max tool calls reached
+    // Requirement 6: MAX TOOL LIMIT MUST NOT BYPASS PLAN
+    if (turnPlan) {
+      const completeness = turnPlanner.validateTurnCompleteness(
+        turnPlan,
+        executedToolNames,
+        currentState,
+        "",
+      );
+      if (!completeness.isComplete) {
+        logger.error(
+          {
+            requestId,
+            sessionId,
+            missingObjective: completeness.missingObjective,
+            missingTool: completeness.missingTool,
+            toolCallCount,
+            executedTools: executedToolNames,
+          },
+          "[ToolLoop] Max tool limit reached with incomplete plan; failing closed",
+        );
+        throw new ModelInvalidResponseError(
+          `Max tool execution limit reached before completing required objective '${completeness.missingObjective}' (${completeness.missingTool}).`,
+        );
+      }
+    }
+
     const remainingFinalMs = turnDeadline ? turnDeadline - Date.now() : config.CHAT_TURN_TIMEOUT_MS;
     const finalResp = await modelProvider.chat({
       messages,
@@ -524,6 +609,19 @@ export class ToolLoop {
       totalPromptTokens += finalResp.usage.promptTokens || 0;
       totalCompletionTokens += finalResp.usage.completionTokens || 0;
     }
+
+    logger.info(
+      {
+        requestId,
+        sessionId,
+        plannedObjectives: turnPlan?.objectives || [],
+        requiredTools: turnPlan?.requiredReadTools || [],
+        allowedTools: turnPlan?.allowedTools || [],
+        executedTools: executedToolNames,
+        rejectedOutOfPlanTools,
+      },
+      "[ToolLoop] Turn execution complete (at max tool limit)",
+    );
 
     return {
       finalContent:

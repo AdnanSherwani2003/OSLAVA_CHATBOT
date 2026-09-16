@@ -22,12 +22,15 @@ export type CapabilityObjective =
 export interface TurnPlan {
   readonly objectives: CapabilityObjective[];
   readonly requiredReadTools: V1ReadToolName[];
+  readonly allowedTools: V1ToolName[];
   readonly isUnsupported: boolean;
   readonly isWriteIntent: boolean;
   readonly isConfirmation: boolean;
   readonly isConversational: boolean;
   readonly workerGrounded: boolean;
   readonly eventGrounded: boolean;
+  readonly isAmbiguous?: boolean;
+  readonly writeIntentTool?: V1ToolName;
   readonly extractedEntityName?: string;
 }
 
@@ -42,7 +45,7 @@ const UUID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 
 export class TurnPlanner {
   /**
-   * Evaluates the user prompt against active session context to produce a structured TurnPlan.
+   * Evaluates the user prompt against active session context to produce a structured, entity-grounded TurnPlan.
    */
   public planTurn(userPrompt: string, state: SessionState | null): TurnPlan {
     const text = userPrompt.trim().toLowerCase();
@@ -52,7 +55,7 @@ export class TurnPlanner {
     // Check UUID presence in prompt
     const hasExplicitUuid = UUID_REGEX.test(userPrompt);
 
-    // 1. Check for Unsupported Operations
+    // 1. Check for Unsupported Operations (Strict Boundary)
     const unsupportedPatterns = [
       /\bassign\s+(worker|leader|staff|someone|people)\b/i,
       /\bassign\b.*\bto\b/i,
@@ -72,6 +75,7 @@ export class TurnPlanner {
       return {
         objectives,
         requiredReadTools: [],
+        allowedTools: [],
         isUnsupported: true,
         isWriteIntent: false,
         isConfirmation: false,
@@ -92,6 +96,7 @@ export class TurnPlanner {
       return {
         objectives,
         requiredReadTools: [],
+        allowedTools: [],
         isUnsupported: false,
         isWriteIntent: false,
         isConfirmation: true,
@@ -102,124 +107,304 @@ export class TurnPlanner {
     }
 
     // 3. Check for Supported Write Intents
-    const isWriteIntent =
+    const isWorkerCategoryWrite =
       /\b(change|upgrade|downgrade|demote|promote)\s+(worker\s+)?(category|tier)\b/i.test(text) ||
-      /\bpublish\s+event\b/i.test(text) ||
-      /\bcomplete\s+event\b/i.test(text) ||
-      /\bclose\s+event\b/i.test(text);
+      /\b(promote|demote|upgrade|downgrade)\b.*\b(to\s+)?(category\s+)?[a-c]\b/i.test(text) ||
+      /\bcategory\s+[a-c]\b/i.test(text);
+    const isPublishEventWrite = /\bpublish(\s+this)?\s+event\b/i.test(text);
+    const isCompleteEventWrite = /\bcomplete(\s+this)?\s+event\b/i.test(text);
+    const isCloseEventWrite = /\bclose(\s+this)?\s+event\b/i.test(text);
 
-    if (isWriteIntent) {
-      objectives.push("WRITE_INTENT");
-    }
+    const isWriteIntent =
+      isWorkerCategoryWrite ||
+      isPublishEventWrite ||
+      isCompleteEventWrite ||
+      isCloseEventWrite;
+
+    let writeIntentTool: V1ToolName | undefined;
+    if (isWorkerCategoryWrite) writeIntentTool = "change_worker_category";
+    else if (isPublishEventWrite) writeIntentTool = "publish_event";
+    else if (isCompleteEventWrite) writeIntentTool = "complete_event";
+    else if (isCloseEventWrite) writeIntentTool = "close_event";
 
     // 4. Grounding Check from active state
-    // Worker is considered grounded if state has currentWorkerId or prompt contains explicit UUID
-    const workerGrounded = Boolean(state?.currentWorkerId || (hasExplicitUuid && text.includes("worker")));
-    // Event is considered grounded if state has currentEventId or prompt contains explicit UUID
-    const eventGrounded = Boolean(state?.currentEventId || (hasExplicitUuid && (text.includes("event") || text.includes("hall"))));
+    const workerGrounded = Boolean(
+      state?.currentWorkerId || (hasExplicitUuid && /\bworker\b/i.test(text)),
+    );
+    const eventGrounded = Boolean(
+      state?.currentEventId || (hasExplicitUuid && (/\bevent\b/i.test(text) || /\bhall\b/i.test(text))),
+    );
 
-    // 5. Detect Worker Capabilities
-    const workerHistoryRequested =
-      /\b(worker\s+)?history\b/i.test(text) ||
-      /\b(audit|track record|past assignments)\b/i.test(text);
-    const workerDetailsRequested =
-      /\b(worker\s+)?(detail|details|profile|reliability|score)\b/i.test(text) ||
-      /\bwho is\b/i.test(text);
-    const workerSearchRequested =
-      /\b(find|search|lookup|look up|get|list|show)\s+(worker|workers)\b/i.test(text) ||
-      /\bworker\s+[a-z0-9]+/i.test(text);
+    // 5. Entity Domain & Anchor Detection (Requirement 1, 2, 3, 4, 10)
+    // Explicit Event Anchors in prompt:
+    const hasExplicitEventAnchor =
+      /\b(event|events|hall(\s+function)?|functions?|wedding|ceremony|banquet|convention|reception|gathering|shifts?|post-event)\b/i.test(text) ||
+      isPublishEventWrite ||
+      isCompleteEventWrite ||
+      isCloseEventWrite ||
+      Boolean(state?.currentEventLabel && text.includes(state.currentEventLabel.toLowerCase()));
 
-    if (workerHistoryRequested) {
-      objectives.push("WORKER_HISTORY");
-      if (!workerGrounded) {
-        requiredReadTools.push("search_workers");
+    // Explicit Worker Anchors in prompt:
+    const hasExplicitWorkerAnchor =
+      /\b(workers?|staff|staffing|employees?|crew|contractors?|personnel)\b/i.test(text) ||
+      /\bworker\s+(?:number\s+|#\s*)?[a-z0-9-]+\b/i.test(text) ||
+      /\bwho\s+is\b/i.test(text) ||
+      isWorkerCategoryWrite ||
+      /\b(audit|track\s+record|past\s+assignments)\b/i.test(text) ||
+      Boolean(state?.currentWorkerLabel && text.includes(state.currentWorkerLabel.toLowerCase()));
+
+    // Pronouns:
+    const hasPersonPronoun = /\b(he|him|his|she|her)\b/i.test(text);
+    const hasNeuterPronoun = /\b(it|its|this|that)\b/i.test(text);
+
+    // Specific Action Indicators:
+    const hasReportAction = /\b(report|summary\s+report|post-event|attendance\s+report)\b/i.test(text);
+    const hasHistoryAction = /\b(history|track\s+record|past\s+assignments|audit)\b/i.test(text);
+    const hasDetailsAction = /\b(details?|profile|reliability|score|allowance|tell me about)\b/i.test(text);
+    const hasSearchVerbs = /\b(find|search|lookup|look up|get|list|show|upcoming)\b/i.test(text);
+    const hasOrdinalSelection = /\b(first|second|third|1st|2nd|3rd|select)\b/i.test(text);
+
+    // Check for possessive proper nouns (e.g. "Arif's details" vs "VM Hall's details"):
+    const hasPossessiveNoun = /\b([a-z0-9-]+)'s\b/i.test(text);
+
+    // Dashboard query detection:
+    const isDashboardOnly =
+      /\b(what'?s\s+happening|happening\s+today|today'?s\s+(overview|status|events|metrics)|how\s+are\s+things|dashboard)\b/i.test(text) ||
+      (/\btoday\b/i.test(text) && !hasExplicitEventAnchor && !hasExplicitWorkerAnchor && !hasPersonPronoun && !hasReportAction && !hasHistoryAction && !hasDetailsAction);
+
+    // Subject/Entity Resolution:
+    let hasEventDomain = false;
+    let hasWorkerDomain = false;
+
+    if (hasExplicitEventAnchor && !hasExplicitWorkerAnchor) {
+      hasEventDomain = true;
+    } else if (hasExplicitWorkerAnchor && !hasExplicitEventAnchor) {
+      hasWorkerDomain = true;
+    } else if (hasExplicitEventAnchor && hasExplicitWorkerAnchor) {
+      // Requirement 4: True multi-entity turn
+      hasEventDomain = true;
+      hasWorkerDomain = true;
+    } else {
+      // Neither explicit anchor in prompt: resolve via pronouns, ordinals, or session continuity
+      if (hasPersonPronoun && (hasHistoryAction || hasDetailsAction || hasSearchVerbs || isWriteIntent)) {
+        hasWorkerDomain = true;
+      } else if (hasNeuterPronoun && (hasDetailsAction || hasReportAction || isPublishEventWrite || isCompleteEventWrite || isCloseEventWrite)) {
+        hasEventDomain = true;
+      } else if (hasHistoryAction) {
+        hasWorkerDomain = true;
+      } else if (hasReportAction) {
+        hasEventDomain = true;
+      } else if (hasPossessiveNoun && (hasDetailsAction || hasHistoryAction)) {
+        hasWorkerDomain = true;
+      } else if (hasOrdinalSelection && state?.recentWorkerResults?.length && !state?.recentEventResults?.length) {
+        hasWorkerDomain = true;
+      } else if (hasOrdinalSelection && state?.recentEventResults?.length && !state?.recentWorkerResults?.length) {
+        hasEventDomain = true;
+      } else if (hasDetailsAction || hasSearchVerbs) {
+        if (state?.currentEventId && !state?.currentWorkerId) {
+          hasEventDomain = true;
+        } else if (state?.currentWorkerId && !state?.currentEventId) {
+          hasWorkerDomain = true;
+        } else if (state?.currentEventId && state?.currentWorkerId) {
+          // Ambiguous! Both event and worker exist in session state.
+          // Requirement 10: DO NOT GUESS!
+          objectives.push("CONVERSATIONAL");
+          return {
+            objectives,
+            requiredReadTools: [],
+            allowedTools: [],
+            isUnsupported: false,
+            isWriteIntent: false,
+            isConfirmation: false,
+            isConversational: true,
+            workerGrounded: false,
+            eventGrounded: false,
+            isAmbiguous: true,
+          };
+        }
       }
-      requiredReadTools.push("get_worker_history");
     }
 
-    if (workerDetailsRequested) {
-      objectives.push("WORKER_DETAILS");
-      if (!workerGrounded && !requiredReadTools.includes("search_workers")) {
-        requiredReadTools.push("search_workers");
-      }
-      requiredReadTools.push("get_worker_details");
-    }
-
-    if (workerSearchRequested && !workerHistoryRequested && !workerDetailsRequested) {
-      objectives.push("SEARCH_WORKERS");
-      if (!requiredReadTools.includes("search_workers")) {
-        requiredReadTools.push("search_workers");
+    // 6. Assign Write Intent Objectives
+    if (isWriteIntent) {
+      objectives.push("WRITE_INTENT");
+      if (isWorkerCategoryWrite) {
+        hasWorkerDomain = true;
+      } else {
+        hasEventDomain = true;
       }
     }
 
-    // 6. Detect Event Capabilities
-    const eventReportRequested =
-      /\b(event\s+)?report\b/i.test(text) ||
-      /\b(summary report|post-event|attendance report)\b/i.test(text);
-    const eventDetailsRequested =
-      /\b(event\s+)?details\b/i.test(text) ||
-      /\btell me about\b/i.test(text) ||
-      /\b(shifts|allowance|staffing details)\b/i.test(text);
-    const eventSearchRequested =
-      /\b(find|search|upcoming|events?)\b/i.test(text) &&
-      !text.includes("today") &&
-      !eventReportRequested &&
-      !eventDetailsRequested;
-
-    if (eventReportRequested) {
-      objectives.push("EVENT_REPORT");
-      if (!eventGrounded && !requiredReadTools.includes("search_events")) {
-        requiredReadTools.push("search_events");
+    // 7. Assign Event Capabilities (if hasEventDomain)
+    if (hasEventDomain) {
+      if (hasDetailsAction) {
+        objectives.push("EVENT_DETAILS");
+        if (!eventGrounded && !requiredReadTools.includes("search_events")) {
+          requiredReadTools.push("search_events");
+        }
+        requiredReadTools.push("get_event_details");
       }
-      requiredReadTools.push("get_event_report");
-    }
 
-    if (eventDetailsRequested) {
-      objectives.push("EVENT_DETAILS");
-      if (!eventGrounded && !requiredReadTools.includes("search_events")) {
-        requiredReadTools.push("search_events");
+      if (hasReportAction) {
+        objectives.push("EVENT_REPORT");
+        if (!eventGrounded && !requiredReadTools.includes("search_events")) {
+          requiredReadTools.push("search_events");
+        }
+        requiredReadTools.push("get_event_report");
       }
-      requiredReadTools.push("get_event_details");
-    }
 
-    if (eventSearchRequested) {
-      objectives.push("SEARCH_EVENTS");
-      if (!requiredReadTools.includes("search_events")) {
-        requiredReadTools.push("search_events");
+      // If search explicitly requested or ungrounded event query without details/report
+      const explicitSearch = /\b(find|search|lookup|look up|list|upcoming)\b/i.test(text);
+      if ((explicitSearch || (!hasReportAction && !hasDetailsAction && !isWriteIntent)) && !eventGrounded) {
+        if (!objectives.includes("SEARCH_EVENTS")) {
+          objectives.unshift("SEARCH_EVENTS");
+        }
+        if (!requiredReadTools.includes("search_events")) {
+          requiredReadTools.unshift("search_events");
+        }
       }
     }
 
-    // 7. Detect Dashboard / Today Overview Capabilities
-    const dashboardRequested =
-      /\b(what'?s\s+happening|happening today|today'?s\s+(overview|status|events|metrics)|how are things|dashboard)\b/i.test(text) ||
-      (/\btoday\b/i.test(text) && !workerHistoryRequested && !workerDetailsRequested && !workerSearchRequested && !eventReportRequested && !eventDetailsRequested);
+    // 8. Assign Worker Capabilities (if hasWorkerDomain)
+    if (hasWorkerDomain) {
+      if (hasDetailsAction) {
+        objectives.push("WORKER_DETAILS");
+        if (!workerGrounded && !requiredReadTools.includes("search_workers")) {
+          requiredReadTools.push("search_workers");
+        }
+        requiredReadTools.push("get_worker_details");
+      }
 
-    if (dashboardRequested) {
+      if (hasHistoryAction) {
+        objectives.push("WORKER_HISTORY");
+        if (!workerGrounded && !requiredReadTools.includes("search_workers")) {
+          requiredReadTools.push("search_workers");
+        }
+        requiredReadTools.push("get_worker_history");
+      }
+
+      const explicitSearch = /\b(find|search|lookup|look up|get|list|show)\b/i.test(text);
+      if ((explicitSearch || (!hasHistoryAction && !hasDetailsAction && !isWriteIntent)) && !workerGrounded) {
+        if (!objectives.includes("SEARCH_WORKERS")) {
+          objectives.unshift("SEARCH_WORKERS");
+        }
+        if (!requiredReadTools.includes("search_workers")) {
+          requiredReadTools.unshift("search_workers");
+        }
+      }
+    }
+
+    // 9. Assign Dashboard Capabilities
+    if (isDashboardOnly || (/\b(what'?s\s+happening|happening\s+today|dashboard)\b/i.test(text))) {
       objectives.push("DASHBOARD");
-      // Dashboard objective can be satisfied by get_dashboard or search_events
       if (!requiredReadTools.includes("get_dashboard") && !requiredReadTools.includes("search_events")) {
-        requiredReadTools.push("get_dashboard");
+        requiredReadTools.unshift("get_dashboard");
       }
     }
 
-    // 8. Conversational / General Inquiries
-    const isConversational =
-      objectives.length === 0 ||
+    // 10. INVARIANT ENFORCEMENT (Requirement 4)
+    // If pure event domain, strictly purge any worker capabilities
+    if (hasEventDomain && !hasWorkerDomain) {
+      for (let i = objectives.length - 1; i >= 0; i--) {
+        if (["SEARCH_WORKERS", "WORKER_DETAILS", "WORKER_HISTORY"].includes(objectives[i])) {
+          objectives.splice(i, 1);
+        }
+      }
+      for (let i = requiredReadTools.length - 1; i >= 0; i--) {
+        if (["search_workers", "get_worker_details", "get_worker_history"].includes(requiredReadTools[i])) {
+          requiredReadTools.splice(i, 1);
+        }
+      }
+    }
+
+    // If pure worker domain, strictly purge any event capabilities
+    if (hasWorkerDomain && !hasEventDomain) {
+      for (let i = objectives.length - 1; i >= 0; i--) {
+        if (["SEARCH_EVENTS", "EVENT_DETAILS", "EVENT_REPORT"].includes(objectives[i])) {
+          objectives.splice(i, 1);
+        }
+      }
+      for (let i = requiredReadTools.length - 1; i >= 0; i--) {
+        if (["search_events", "get_event_details", "get_event_report"].includes(requiredReadTools[i])) {
+          requiredReadTools.splice(i, 1);
+        }
+      }
+    }
+
+    // 11. Conversational Fallback
+    const isPureGreeting =
       /^(hi|hello|hey|greetings|good morning|good evening|help|what can you do)\b/i.test(text);
+
+    const isConversational =
+      isPureGreeting || (objectives.length === 0 && !hasSearchVerbs);
 
     if (isConversational && objectives.length === 0) {
       objectives.push("CONVERSATIONAL");
     }
 
+    // 12. Derive Allowed Tools Per Turn (Requirement 8 & 9)
+    const allowedTools: V1ToolName[] = [];
+    if (!isUnsupported && !isConfirmation) {
+      const allowedSet = new Set<V1ToolName>();
+
+      if (isWriteIntent && writeIntentTool) {
+        // Supported write-intent turn:
+        // Expose ONLY the specific write-intent tool requested + prerequisite read tools needed for grounding/fresh state
+        allowedSet.add(writeIntentTool);
+        if (writeIntentTool === "change_worker_category") {
+          allowedSet.add("search_workers");
+          allowedSet.add("get_worker_details");
+        } else if (
+          writeIntentTool === "publish_event" ||
+          writeIntentTool === "complete_event" ||
+          writeIntentTool === "close_event"
+        ) {
+          allowedSet.add("search_events");
+          allowedSet.add("get_event_details");
+        }
+      } else {
+        // Read-only turn: strictly NO write tools!
+        for (const t of requiredReadTools) {
+          allowedSet.add(t);
+        }
+        if (hasEventDomain && !hasWorkerDomain) {
+          allowedSet.add("search_events");
+          allowedSet.add("get_event_details");
+          allowedSet.add("get_event_report");
+        } else if (hasWorkerDomain && !hasEventDomain) {
+          allowedSet.add("search_workers");
+          allowedSet.add("get_worker_details");
+          allowedSet.add("get_worker_history");
+        } else if (hasEventDomain && hasWorkerDomain) {
+          allowedSet.add("search_events");
+          allowedSet.add("get_event_details");
+          allowedSet.add("get_event_report");
+          allowedSet.add("search_workers");
+          allowedSet.add("get_worker_details");
+          allowedSet.add("get_worker_history");
+        } else if (objectives.includes("DASHBOARD")) {
+          allowedSet.add("get_dashboard");
+          allowedSet.add("search_events");
+        } else if (!isConversational) {
+          allowedSet.add("search_events");
+          allowedSet.add("search_workers");
+          allowedSet.add("get_dashboard");
+        }
+      }
+      allowedTools.push(...Array.from(allowedSet));
+    }
+
     return {
       objectives,
       requiredReadTools,
+      allowedTools,
       isUnsupported,
       isWriteIntent,
       isConfirmation,
-      isConversational,
+      isConversational: isConversational && !isUnsupported && !isConfirmation,
       workerGrounded,
       eventGrounded,
+      writeIntentTool,
     };
   }
 
