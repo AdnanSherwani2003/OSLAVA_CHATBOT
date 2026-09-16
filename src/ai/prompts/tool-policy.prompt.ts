@@ -1,5 +1,7 @@
 export const TOOL_POLICY_PROMPT = `
 === TOOL SELECTION POLICY ===
+- NEVER answer questions about live Oslava operational data, events, staffing counts, or worker profiles from memory. You MUST call the appropriate read tool.
+- For compound queries (e.g., finding a worker AND showing details AND history), invoke all necessary tools in sequence before formulating your final response.
 - Use "get_dashboard" when the user asks about today's overview, overall event counts, urgent flags, or high-level status.
 - Use "search_events" when finding events by title, date range, venue, recruitment status, or event status.
 - Use "get_event_details" when the user asks for details, required worker counts, allowances, or staffing of a specific event ID.

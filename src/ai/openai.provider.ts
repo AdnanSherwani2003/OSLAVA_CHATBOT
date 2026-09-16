@@ -1,4 +1,4 @@
-import { Groq } from "groq-sdk";
+import OpenAI from "openai";
 import { getConfig } from "../config/env.js";
 import {
   ModelInvalidResponseError,
@@ -14,26 +14,26 @@ import {
   ModelToolCall,
 } from "./model.provider.js";
 
-export class GroqProvider implements ModelProvider {
-  private client: Groq | null = null;
+export class OpenAIProvider implements ModelProvider {
+  private client: OpenAI | null = null;
 
-  private getClient(): Groq {
+  private getClient(): OpenAI {
     if (this.client) return this.client;
     const config = getConfig();
-    if (!config.GROQ_API_KEY) {
-      throw new ModelUnavailableError("GROQ_API_KEY is not configured.");
+    if (!config.OPENAI_API_KEY) {
+      throw new ModelUnavailableError("OPENAI_API_KEY is not configured.");
     }
-    this.client = new Groq({ apiKey: config.GROQ_API_KEY });
+    this.client = new OpenAI({ apiKey: config.OPENAI_API_KEY });
     return this.client;
   }
 
   async chat(options: ModelCompletionOptions): Promise<ModelCompletionResponse> {
     const config = getConfig();
     const client = this.getClient();
-    const timeoutMs = options.timeoutMs ?? config.GROQ_TIMEOUT_MS;
+    const timeoutMs = options.timeoutMs ?? config.OPENAI_TIMEOUT_MS;
 
-    const requestPayload: any = {
-      model: config.GROQ_MODEL,
+    const requestPayload: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
+      model: config.OPENAI_MODEL,
       messages: options.messages.map((m) => {
         const msg: any = {
           role: m.role,
@@ -54,35 +54,24 @@ export class GroqProvider implements ModelProvider {
         return msg;
       }),
       temperature: options.temperature ?? 0.1,
-      max_tokens: options.maxTokens ?? config.GROQ_MAX_OUTPUT_TOKENS,
+      max_tokens: options.maxTokens ?? config.OPENAI_MAX_OUTPUT_TOKENS,
     };
 
     if (options.tools && options.tools.length > 0) {
-      requestPayload.tools = options.tools;
+      requestPayload.tools = options.tools as OpenAI.Chat.ChatCompletionTool[];
       requestPayload.parallel_tool_calls = false;
       if (options.toolChoice) {
-        requestPayload.tool_choice = options.toolChoice;
+        requestPayload.tool_choice = options.toolChoice as OpenAI.Chat.ChatCompletionToolChoiceOption;
       }
     }
 
-    // Execute with 1 transient retry
-    return this.executeWithRetry(client, requestPayload, timeoutMs, 0, options.signal);
-  }
-
-  private async executeWithRetry(
-    client: Groq,
-    payload: any,
-    timeoutMs: number,
-    retryCount = 0,
-    signal?: AbortSignal,
-  ): Promise<ModelCompletionResponse> {
     const controller = new AbortController();
     const abortHandler = () => controller.abort();
-    if (signal) {
-      if (signal.aborted) {
+    if (options.signal) {
+      if (options.signal.aborted) {
         controller.abort();
       } else {
-        signal.addEventListener("abort", abortHandler);
+        options.signal.addEventListener("abort", abortHandler);
       }
     }
     const timer = setTimeout(() => {
@@ -90,22 +79,22 @@ export class GroqProvider implements ModelProvider {
     }, timeoutMs);
 
     try {
-      const response = await client.chat.completions.create(payload, {
+      const response = await client.chat.completions.create(requestPayload, {
         signal: controller.signal,
       });
       clearTimeout(timer);
-      if (signal) {
-        signal.removeEventListener("abort", abortHandler);
+      if (options.signal) {
+        options.signal.removeEventListener("abort", abortHandler);
       }
 
       const choice = response.choices?.[0];
       if (!choice) {
-        throw new ModelInvalidResponseError("No completion choices returned by model.");
+        throw new ModelInvalidResponseError("No completion choices returned by OpenAI.");
       }
 
       let content = choice.message?.content || null;
       if (content) {
-        // Strip any internal reasoning or <think> tags if model emits them
+        // Strip any unexpected reasoning or <think> tags
         content = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
       }
 
@@ -134,58 +123,54 @@ export class GroqProvider implements ModelProvider {
           totalTokens: response.usage?.total_tokens,
         },
         finishReason: choice.finish_reason || undefined,
-        model: response.model || payload.model,
-        provider: "groq",
+        model: response.model || requestPayload.model,
+        provider: "openai",
         fallbackUsed: false,
       };
     } catch (err: any) {
       clearTimeout(timer);
-      if (signal) {
-        signal.removeEventListener("abort", abortHandler);
+      if (options.signal) {
+        options.signal.removeEventListener("abort", abortHandler);
       }
 
-      if (err.name === "AbortError") {
-        throw new ModelTimeoutError(`AI model request timed out after ${timeoutMs}ms.`);
+      if (err.name === "AbortError" || err instanceof OpenAI.APIConnectionTimeoutError) {
+        throw new ModelTimeoutError(`OpenAI request timed out after ${timeoutMs}ms.`);
+      }
+
+      if (err instanceof ModelInvalidResponseError) {
+        throw err;
       }
 
       const status = err.status || err.statusCode;
-      const isRateLimit = status === 429;
-      const isServerError = status >= 500 && status < 600;
+      const isRateLimit = status === 429 || err instanceof OpenAI.RateLimitError;
+      const isServerError =
+        (status >= 500 && status < 600) || err instanceof OpenAI.InternalServerError;
       const isNetworkError =
+        err instanceof OpenAI.APIConnectionError ||
         err.code === "ECONNRESET" ||
         err.code === "ETIMEDOUT" ||
-        err.message?.includes("network");
-
-      if ((isRateLimit || isServerError || isNetworkError) && retryCount === 0) {
-        const delay = isRateLimit ? 1200 : 500;
-        if (timeoutMs - delay < 2000) {
-          logger.warn(
-            { timeoutMs, delay },
-            "[GroqProvider] Insufficient remaining timeout to retry transient failure; failing fast",
-          );
-          if (isRateLimit) throw new ModelRateLimitedError();
-          throw new ModelUnavailableError(err.message || "Model provider unavailable.");
-        }
-
-        logger.warn(
-          { err, status, retryCount },
-          "[GroqProvider] Transient failure, retrying once...",
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        return this.executeWithRetry(client, payload, timeoutMs - delay, 1, signal);
-      }
+        err.message?.includes("network") ||
+        err.message?.includes("fetch failed");
 
       if (isRateLimit) {
-        throw new ModelRateLimitedError();
+        throw new ModelRateLimitedError("OpenAI rate limit exceeded.");
       }
 
       if (isServerError || isNetworkError) {
-        throw new ModelUnavailableError(err.message || "Model provider unavailable.");
+        throw new ModelUnavailableError(err.message || "OpenAI service unavailable.");
       }
 
-      throw err;
+      if (status === 401 || err instanceof OpenAI.AuthenticationError) {
+        logger.error(
+          { status, message: err.message },
+          "[OpenAIProvider] Authentication failure. Check OPENAI_API_KEY configuration.",
+        );
+        throw new ModelUnavailableError("OpenAI authentication failed.");
+      }
+
+      throw new ModelUnavailableError(err.message || "OpenAI request failed.");
     }
   }
 }
 
-export const groqProvider = new GroqProvider();
+export const openAIProvider = new OpenAIProvider();

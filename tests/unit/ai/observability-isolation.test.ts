@@ -9,17 +9,17 @@ import { sessionRepository } from "../../../src/persistence/repositories/session
 import { messageRepository } from "../../../src/persistence/repositories/message.repository.js";
 import { stateRepository } from "../../../src/persistence/repositories/state.repository.js";
 import { traceRepository } from "../../../src/persistence/repositories/trace.repository.js";
-
+import { ModelUnavailableError } from "../../../src/domain/errors.js";
 import { parseConfig, setCachedConfig } from "../../../src/config/env.js";
 
-describe("AgentService", () => {
+describe("Observability Isolation (Part V)", () => {
   const mockActor: ActorContext = {
     userId: "11111111-1111-1111-1111-111111111111",
     role: "ADMIN",
     accountStatus: "ACTIVE",
     displayName: "Admin Alice",
     accessToken: "jwt.mock",
-    requestId: "req-1",
+    requestId: "req-obs-1",
   };
 
   const mockGateway = {} as OslavaGateway;
@@ -34,13 +34,14 @@ describe("AgentService", () => {
   });
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     await sessionRepository.clear();
     await messageRepository.clear();
     await stateRepository.clear();
     await traceRepository.clear();
   });
 
-  it("coordinates user turn end-to-end", async () => {
+  it("successful chatbot response remains successful even when recordChatTrace throws", async () => {
     const convService = new ConversationService(
       sessionRepository,
       messageRepository,
@@ -50,42 +51,72 @@ describe("AgentService", () => {
 
     const session = await convService.createSession(mockActor.userId);
 
+    // Force recordChatTrace to throw a database connection error
+    vi.spyOn(traceRepository, "recordChatTrace").mockRejectedValue(
+      new Error("PostgreSQL connection error in telemetry pool"),
+    );
+
     const mockModel: ModelProvider = {
       chat: vi.fn().mockResolvedValue({
-        content: "Hello! I can help you manage events and operations today.",
+        content: "Operational status is normal.",
         toolCalls: [],
-        model: "openai/gpt-oss-120b",
-        usage: { promptTokens: 50, completionTokens: 20, totalTokens: 70 },
+        model: "gpt-4o-mini",
+        provider: "openai",
       }),
     };
 
-    const toolLoop = new ToolLoop(5);
+    const toolLoop = new ToolLoop(8);
     const agentService = new AgentService(mockModel, convService, toolLoop);
 
     const result = await agentService.executeUserTurn({
       sessionId: session.id,
-      userPrompt: "Hello, can you help me?",
-      requestId: "req-1",
+      userPrompt: "Hi",
+      requestId: "req-obs-1",
       gateway: mockGateway,
       actor: mockActor,
     });
 
+    // Chatbot response must succeed despite tracing write failure
     expect(result.response.type).toBe("message");
-    expect((result.response as any).content).toBe("Hello! I can help you manage events and operations today.");
-    expect(result.messageId).toBeDefined();
+    expect((result.response as any).content).toBe("Operational status is normal.");
 
-    // Verify messages persisted
+    // Core message must still be persisted
     const messages = await convService.getMessages(session.id);
     expect(messages).toHaveLength(2);
-    expect(messages[0].role).toBe("USER");
-    expect(messages[0].content).toBe("Hello, can you help me?");
-    expect(messages[1].role).toBe("ASSISTANT");
-    expect(messages[1].content).toBe("Hello! I can help you manage events and operations today.");
+    expect(messages[1].content).toBe("Operational status is normal.");
+  });
 
-    // Verify trace recorded
-    const traces = await traceRepository.getChatTracesBySession(session.id);
-    expect(traces).toHaveLength(1);
-    expect(traces[0].toolCallCount).toBe(0);
-    expect(traces[0].inputTokens).toBe(50);
+  it("when model fails and tracing also fails, original model error remains the returned error", async () => {
+    const convService = new ConversationService(
+      sessionRepository,
+      messageRepository,
+      stateRepository,
+      traceRepository,
+    );
+
+    const session = await convService.createSession(mockActor.userId);
+
+    // Force recordChatTrace to throw
+    vi.spyOn(traceRepository, "recordChatTrace").mockRejectedValue(
+      new Error("Telemetry write failure"),
+    );
+
+    // Model fails with ModelUnavailableError
+    const mockModel: ModelProvider = {
+      chat: vi.fn().mockRejectedValue(new ModelUnavailableError("OpenAI API 503 Outage")),
+    };
+
+    const toolLoop = new ToolLoop(8);
+    const agentService = new AgentService(mockModel, convService, toolLoop);
+
+    await expect(
+      agentService.executeUserTurn({
+        sessionId: session.id,
+        userPrompt: "Hi",
+        requestId: "req-obs-2",
+        gateway: mockGateway,
+        actor: mockActor,
+      }),
+    ).rejects.toThrow(ModelUnavailableError);
   });
 });

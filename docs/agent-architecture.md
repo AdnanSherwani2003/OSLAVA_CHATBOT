@@ -1,7 +1,10 @@
 # Oslava Admin AI Agent Architecture
 
 ## Overview
-The Oslava Admin AI Agent is a standalone, read-only operational copilot designed for event administrators and coordinators. It integrates with Groq's `openai/gpt-oss-120b` foundation model via native tool calling, operating with a bounded reasoning loop, strict session persistence, entity context tracking, and defense-in-depth prompt injection protections.
+The Oslava Admin AI Agent is a standalone operational copilot designed for event administrators and coordinators. It integrates with a resilient two-tier AI provider architecture:
+- **Primary AI Provider**: OpenAI API (`gpt-4o-mini`)
+- **Fallback AI Provider**: Groq API (`openai/gpt-oss-120b`)
+The agent operates via native tool calling with a bounded reasoning loop, strict session persistence, entity context tracking, automatic provider fallback on eligible AI errors, and defense-in-depth prompt injection protections.
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -26,7 +29,8 @@ The Oslava Admin AI Agent is a standalone, read-only operational copilot designe
 ┌────────────────────────────────────────────────────────┐
 │                Bounded ToolLoop (Max 5)                │
 │                                                        │
-│  1. Send prompt + Tool Definitions to GroqProvider     │
+│  1. Send prompt + Tool Definitions to ModelProvider    │
+│     (FallbackModelProvider: OpenAI -> Groq on failure) │
 │  2. If Model emits tool call:                          │
 │     ├── Write tool interceptor: rejects write actions  │
 │     ├── EntityContextService: rejects hallucinated UUID│

@@ -19,6 +19,16 @@ export class MetricsRegistry {
   private modelCallsCount = 0;
 
   private modelDurations: number[] = [];
+  private openaiModelCallsCount = 0;
+  private groqModelCallsCount = 0;
+  private fallbackActivationsCount = 0;
+  private primaryProviderFailuresCount = 0;
+  private fallbackProviderFailuresCount = 0;
+  private toolCallsTotal = 0;
+  private toolPlanRecoveryTotal = 0;
+  private toolOmissionPreventedTotal = 0;
+  private chatTurnTimeoutsTotal = 0;
+  private toolTimeoutsTotal = 0;
   private toolInvocations = new Map<string, { count: number; success: number; failed: number; totalMs: number }>();
   private actionsProposed = new Map<string, number>();
   private actionsConfirmed = new Map<string, number>();
@@ -31,6 +41,16 @@ export class MetricsRegistry {
     this.httpErrorsCount = 0;
     this.chatTurnsCount = 0;
     this.modelCallsCount = 0;
+    this.openaiModelCallsCount = 0;
+    this.groqModelCallsCount = 0;
+    this.fallbackActivationsCount = 0;
+    this.primaryProviderFailuresCount = 0;
+    this.fallbackProviderFailuresCount = 0;
+    this.toolCallsTotal = 0;
+    this.toolPlanRecoveryTotal = 0;
+    this.toolOmissionPreventedTotal = 0;
+    this.chatTurnTimeoutsTotal = 0;
+    this.toolTimeoutsTotal = 0;
     this.modelDurations = [];
     this.toolInvocations.clear();
     this.actionsProposed.clear();
@@ -63,6 +83,18 @@ export class MetricsRegistry {
     }
   }
 
+  public recordModelCallByProvider(provider: string, _durationMs?: number): void {
+    if (provider === "openai") {
+      this.openaiModelCallsCount++;
+    } else if (provider === "groq") {
+      this.groqModelCallsCount++;
+    }
+  }
+
+  public recordFallbackActivation(_primary: string, _fallback: string): void {
+    this.fallbackActivationsCount++;
+  }
+
   public recordToolInvocation(toolName: string, durationMs: number, success: boolean): void {
     const entry = this.toolInvocations.get(toolName) || {
       count: 0,
@@ -78,6 +110,22 @@ export class MetricsRegistry {
     }
     entry.totalMs += durationMs;
     this.toolInvocations.set(toolName, entry);
+  }
+
+  public recordToolPlanRecovery(): void {
+    this.toolPlanRecoveryTotal++;
+  }
+
+  public recordToolOmissionPrevented(): void {
+    this.toolOmissionPreventedTotal++;
+  }
+
+  public recordChatTurnTimeout(): void {
+    this.chatTurnTimeoutsTotal++;
+  }
+
+  public recordToolTimeout(_toolName?: string): void {
+    this.toolTimeoutsTotal++;
   }
 
   public recordActionProposed(actionType: string): void {
@@ -109,6 +157,11 @@ export class MetricsRegistry {
   }
 
   public recordProviderError(provider: string, errorType: string): void {
+    if (provider === "openai") {
+      this.primaryProviderFailuresCount++;
+    } else if (provider === "groq") {
+      this.fallbackProviderFailuresCount++;
+    }
     const key = `${provider}:${errorType}`;
     this.providerErrors.set(key, (this.providerErrors.get(key) || 0) + 1);
   }
@@ -148,6 +201,16 @@ export class MetricsRegistry {
         chat_turns_total: this.chatTurnsCount,
         model_calls_total: this.modelCallsCount,
         model_latency: this.summarizeDurations(this.modelDurations),
+        openai_model_calls_total: this.openaiModelCallsCount,
+        groq_model_calls_total: this.groqModelCallsCount,
+        fallback_activations_total: this.fallbackActivationsCount,
+        primary_provider_failures_total: this.primaryProviderFailuresCount,
+        fallback_provider_failures_total: this.fallbackProviderFailuresCount,
+        tool_calls_total: this.toolCallsTotal,
+        tool_plan_recovery_total: this.toolPlanRecoveryTotal,
+        tool_omission_prevented_total: this.toolOmissionPreventedTotal,
+        chat_turn_timeouts_total: this.chatTurnTimeoutsTotal,
+        tool_timeouts_total: this.toolTimeoutsTotal,
         tools: toolStats,
       },
       actions: {

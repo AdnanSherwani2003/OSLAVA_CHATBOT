@@ -25,12 +25,29 @@ export const rawEnvSchema = z
     CORS_ORIGINS: z.string().default("*"),
     REQUEST_TIMEOUT_MS: z
       .string()
-      .default("15000")
+      .default("60000")
       .transform((val) => parseInt(val, 10))
       .pipe(z.number().int().positive()),
 
     // Operational Timezone
     APP_TIMEZONE: z.string().default("Asia/Kolkata"),
+
+    // End-to-end chat turn and tool execution timeouts
+    CHAT_TURN_TIMEOUT_MS: z
+      .string()
+      .default("45000")
+      .transform((val) => parseInt(val, 10))
+      .pipe(z.number().int().positive()),
+    TOOL_EXECUTION_TIMEOUT_MS: z
+      .string()
+      .default("10000")
+      .transform((val) => parseInt(val, 10))
+      .pipe(z.number().int().positive()),
+    AI_MAX_TOOL_CALLS: z
+      .string()
+      .default("8")
+      .transform((val) => parseInt(val, 10))
+      .pipe(z.number().int().positive()),
 
     // Phase 3 Chatbot Persistence
     CHAT_PERSISTENCE_MODE: z.enum(["memory", "postgres"]).optional(),
@@ -41,7 +58,7 @@ export const rawEnvSchema = z
       .transform((val) => parseInt(val, 10))
       .pipe(z.number().int().positive()),
 
-    // Phase 3 Groq Model Provider
+    // Phase 3 Groq Model Provider (Fallback)
     GROQ_API_KEY: z.string().min(1).optional(),
     GROQ_MODEL: z.string().default("openai/gpt-oss-120b"),
     GROQ_REASONING_EFFORT: z.enum(["low", "medium", "high"]).default("medium"),
@@ -52,9 +69,32 @@ export const rawEnvSchema = z
       .pipe(z.number().int().positive()),
     GROQ_TIMEOUT_MS: z
       .string()
-      .default("30000")
+      .default("20000")
       .transform((val) => parseInt(val, 10))
       .pipe(z.number().int().positive()),
+
+    // OpenAI Model Provider (Primary)
+    OPENAI_API_KEY: z.string().min(1).optional(),
+    OPENAI_MODEL: z.string().default("gpt-4o-mini"),
+    OPENAI_MAX_OUTPUT_TOKENS: z
+      .string()
+      .default("2000")
+      .transform((val) => parseInt(val, 10))
+      .pipe(z.number().int().positive()),
+    OPENAI_TIMEOUT_MS: z
+      .string()
+      .default("20000")
+      .transform((val) => parseInt(val, 10))
+      .pipe(z.number().int().positive()),
+
+    // AI Provider Routing
+    AI_PRIMARY_PROVIDER: z.enum(["openai", "groq"]).default("openai"),
+    AI_FALLBACK_PROVIDER: z.enum(["openai", "groq", "none"]).default("groq"),
+    AI_FALLBACK_ENABLED: z
+      .string()
+      .default("true")
+      .transform((val) => val === "true"),
+
     CHAT_HISTORY_MESSAGE_LIMIT: z
       .string()
       .default("16")
@@ -182,6 +222,43 @@ export const rawEnvSchema = z
       path: ["APP_TIMEZONE"],
     },
   )
+  .refine(
+    (data) => {
+      if (data.DEV_CLI_MODE === "true") return true;
+      if (
+        data.NODE_ENV === "production" &&
+        data.AI_PRIMARY_PROVIDER === "openai" &&
+        !data.OPENAI_API_KEY
+      ) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message:
+        "OPENAI_API_KEY is required in production when AI_PRIMARY_PROVIDER is 'openai'.",
+      path: ["OPENAI_API_KEY"],
+    },
+  )
+  .refine(
+    (data) => {
+      if (data.DEV_CLI_MODE === "true") return true;
+      if (
+        data.NODE_ENV === "production" &&
+        data.AI_FALLBACK_ENABLED &&
+        data.AI_FALLBACK_PROVIDER === "groq" &&
+        !data.GROQ_API_KEY
+      ) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message:
+        "GROQ_API_KEY is required in production when Groq fallback is enabled.",
+      path: ["GROQ_API_KEY"],
+    },
+  )
   .transform((data) => {
     const isDevCli = data.DEV_CLI_MODE === "true";
     const canonicalKey = (data.SUPABASE_PUBLISHABLE_KEY ||
@@ -205,6 +282,9 @@ export const rawEnvSchema = z
       LOG_LEVEL: data.LOG_LEVEL,
       CORS_ORIGINS: data.CORS_ORIGINS,
       REQUEST_TIMEOUT_MS: data.REQUEST_TIMEOUT_MS,
+      CHAT_TURN_TIMEOUT_MS: data.CHAT_TURN_TIMEOUT_MS,
+      TOOL_EXECUTION_TIMEOUT_MS: data.TOOL_EXECUTION_TIMEOUT_MS,
+      AI_MAX_TOOL_CALLS: data.AI_MAX_TOOL_CALLS,
       APP_TIMEZONE: data.APP_TIMEZONE,
       CHAT_PERSISTENCE_MODE: persistenceMode as "memory" | "postgres",
       DATABASE_URL: data.DATABASE_URL,
@@ -214,6 +294,13 @@ export const rawEnvSchema = z
       GROQ_REASONING_EFFORT: data.GROQ_REASONING_EFFORT,
       GROQ_MAX_OUTPUT_TOKENS: data.GROQ_MAX_OUTPUT_TOKENS,
       GROQ_TIMEOUT_MS: data.GROQ_TIMEOUT_MS,
+      OPENAI_API_KEY: data.OPENAI_API_KEY,
+      OPENAI_MODEL: data.OPENAI_MODEL,
+      OPENAI_MAX_OUTPUT_TOKENS: data.OPENAI_MAX_OUTPUT_TOKENS,
+      OPENAI_TIMEOUT_MS: data.OPENAI_TIMEOUT_MS,
+      AI_PRIMARY_PROVIDER: data.AI_PRIMARY_PROVIDER,
+      AI_FALLBACK_PROVIDER: data.AI_FALLBACK_PROVIDER,
+      AI_FALLBACK_ENABLED: data.AI_FALLBACK_ENABLED,
       CHAT_HISTORY_MESSAGE_LIMIT: data.CHAT_HISTORY_MESSAGE_LIMIT,
       ACTION_CONFIRMATION_TTL_SECONDS: data.ACTION_CONFIRMATION_TTL_SECONDS,
       ALLOW_EPHEMERAL_PRODUCTION_PERSISTENCE:

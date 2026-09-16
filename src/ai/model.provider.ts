@@ -35,6 +35,7 @@ export interface ModelCompletionOptions {
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface ModelCompletionResponse {
@@ -47,6 +48,8 @@ export interface ModelCompletionResponse {
   };
   finishReason?: string;
   model: string;
+  provider?: string;
+  fallbackUsed?: boolean;
 }
 
 export interface ModelProvider {

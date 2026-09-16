@@ -48,19 +48,33 @@ SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
 CHAT_PERSISTENCE_MODE=postgres
 DATABASE_URL=postgresql://user:password@pg-host:5432/oslava_chatbot?sslmode=require
 
-# Groq LLM Provider
+# Primary AI Provider (OpenAI)
+OPENAI_API_KEY=sk-your-production-openai-api-key
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_MAX_OUTPUT_TOKENS=2000
+OPENAI_TIMEOUT_MS=20000
+
+# Fallback AI Provider (Groq)
 GROQ_API_KEY=gsk_your_production_groq_api_key
 GROQ_MODEL=openai/gpt-oss-120b
 GROQ_REASONING_EFFORT=medium
 GROQ_MAX_OUTPUT_TOKENS=2000
-GROQ_TIMEOUT_MS=30000
+GROQ_TIMEOUT_MS=20000
+
+# AI Provider Routing
+AI_PRIMARY_PROVIDER=openai
+AI_FALLBACK_PROVIDER=groq
+AI_FALLBACK_ENABLED=true
+AI_MAX_TOOL_CALLS=8
 
 # Conversation & Write TTL
 CHAT_HISTORY_MESSAGE_LIMIT=16
 ACTION_CONFIRMATION_TTL_SECONDS=600
 
-# Networking & Rate Limits
-REQUEST_TIMEOUT_MS=15000
+# Networking & Timeouts
+REQUEST_TIMEOUT_MS=60000
+CHAT_TURN_TIMEOUT_MS=45000
+TOOL_EXECUTION_TIMEOUT_MS=10000
 CORS_ORIGINS=https://admin.oslava.com,https://app.oslava.com
 
 CHAT_RATE_LIMIT_REQUESTS=20

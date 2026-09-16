@@ -7,6 +7,7 @@ import {
 } from "../context/conversation.service.js";
 import { SessionState } from "../context/context.types.js";
 import { ModelMessage, ModelProvider } from "./model.provider.js";
+import { defaultModelProvider } from "./fallback.provider.js";
 import { groqProvider } from "./groq.provider.js";
 import { buildSystemPrompt } from "./prompts/system.prompt.js";
 import { TOOL_POLICY_PROMPT } from "./prompts/tool-policy.prompt.js";
@@ -24,6 +25,7 @@ import {
 } from "../actions/action-confirmation.service.js";
 
 import { randomUUID } from "node:crypto";
+import { turnPlanner } from "./turn-planner.js";
 
 export interface UserTurnParams {
   sessionId: string;
@@ -55,7 +57,7 @@ export interface ExecuteAgentRequestResult {
 
 export class AgentService {
   constructor(
-    private readonly modelProvider: ModelProvider = groqProvider,
+    private readonly modelProvider: ModelProvider = defaultModelProvider,
     private readonly convService: ConversationService = conversationService,
     private readonly loop: ToolLoop = toolLoop,
     private readonly actionConfirmation: ActionConfirmationService = actionConfirmationService,
@@ -69,13 +71,17 @@ export class AgentService {
       gateway,
       actor,
       requestId = randomUUID(),
-      maxToolCalls = 5,
+      maxToolCalls = 8,
     } = params;
+    const config = getConfig();
     const systemInstruction = `${buildSystemPrompt(null)}\n\n${TOOL_POLICY_PROMPT}`;
     const messages: ModelMessage[] = [
       { role: "system", content: systemInstruction },
       { role: "user", content: prompt },
     ];
+
+    const turnPlan = turnPlanner.planTurn(prompt, null);
+    const turnDeadline = Date.now() + config.CHAT_TURN_TIMEOUT_MS;
 
     const loopResult = await this.loop.run({
       modelProvider: this.modelProvider,
@@ -88,6 +94,8 @@ export class AgentService {
       sessionId: "direct-request",
       traceRepo: this.convService.traceRepository,
       maxToolCalls,
+      turnPlan,
+      turnDeadline,
     });
 
     return {
@@ -148,9 +156,11 @@ export class AgentService {
       content: userPrompt,
     });
 
-    // 5. Run tool loop
+    // 5. Run turn planner & tool loop
     let outcome = "SUCCESS";
     let loopResult;
+    const turnDeadline = Date.now() + config.CHAT_TURN_TIMEOUT_MS;
+    const turnPlan = turnPlanner.planTurn(userPrompt, state);
 
     try {
       loopResult = await this.loop.run({
@@ -163,6 +173,9 @@ export class AgentService {
         requestId,
         sessionId,
         traceRepo: this.convService.traceRepository,
+        turnPlan,
+        turnDeadline,
+        maxToolCalls: config.AI_MAX_TOOL_CALLS,
       });
     } catch (err: any) {
       outcome = err.code || "AGENT_ERROR";
@@ -173,19 +186,32 @@ export class AgentService {
       throw err;
     } finally {
       const durationMs = Date.now() - startTime;
-      await this.convService.traceRepository.recordChatTrace({
-        requestId,
-        sessionId,
-        userId,
-        provider: "groq",
-        model: loopResult?.model || config.GROQ_MODEL,
-        reasoningEffort: config.GROQ_REASONING_EFFORT,
-        toolCallCount: loopResult?.toolCallCount || 0,
-        inputTokens: loopResult?.inputTokens,
-        outputTokens: loopResult?.outputTokens,
-        durationMs,
-        outcome,
-      });
+      const actualProvider = loopResult?.provider || config.AI_PRIMARY_PROVIDER || "openai";
+      const actualModel =
+        loopResult?.model ||
+        (actualProvider.includes("groq") ? config.GROQ_MODEL : config.OPENAI_MODEL);
+
+      // Best-effort observability: tracing failure must never mask user response or provider error
+      try {
+        await this.convService.traceRepository.recordChatTrace({
+          requestId,
+          sessionId,
+          userId,
+          provider: actualProvider,
+          model: actualModel,
+          reasoningEffort: actualProvider.includes("groq") ? config.GROQ_REASONING_EFFORT : null,
+          toolCallCount: loopResult?.toolCallCount || 0,
+          inputTokens: loopResult?.inputTokens,
+          outputTokens: loopResult?.outputTokens,
+          durationMs,
+          outcome,
+        });
+      } catch (traceErr: any) {
+        logger.error(
+          { traceErr, requestId, sessionId },
+          "[AgentService] Failed to record chat trace (observability failure isolated)",
+        );
+      }
     }
 
     // 6. Update session state
