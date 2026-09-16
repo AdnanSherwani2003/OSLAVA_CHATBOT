@@ -23,6 +23,7 @@ import {
   validateResponseCoverage,
 } from "./turn-planner.js";
 import { type V1ToolName } from "./v1-manifest.js";
+import { sanitizeSearchArguments } from "./search-argument-policy.js";
 
 export interface ToolLoopExecutionParams {
   modelProvider: ModelProvider;
@@ -591,6 +592,28 @@ export class ToolLoop {
             }),
           });
           continue;
+        }
+
+        // 2.5 Deterministic Search Argument Policy (Evidence-Based Search Sanitization)
+        if (toolName === "search_events" || toolName === "search_workers") {
+          const { sanitizedArgs, report } = sanitizeSearchArguments(
+            toolName,
+            parsedArgs,
+            userPrompt,
+          );
+          parsedArgs = sanitizedArgs;
+          if (report.removedKeys.length > 0 || report.normalizedKeys.length > 0) {
+            logger.info(
+              {
+                requestId,
+                toolName: report.toolName,
+                proposedKeys: report.proposedKeys,
+                removedKeys: report.removedKeys,
+                normalizedKeys: report.normalizedKeys,
+              },
+              "[ToolLoop] Sanitized search arguments per evidence-based policy",
+            );
+          }
         }
 
         // 3. Hallucination / Entity reference guard

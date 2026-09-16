@@ -26,6 +26,7 @@ CRITICAL TIMEZONE & DATE RESOLUTION RULES:
 3. When searching events for "today", pass start_date: "${timeContext.today}", end_date: "${timeContext.today}".
 4. When searching events for "tomorrow", pass start_date: "${timeContext.tomorrow}", end_date: "${timeContext.tomorrow}".
 5. When searching events for "yesterday", pass start_date: "${timeContext.yesterday}", end_date: "${timeContext.yesterday}".
+6. Never apply a date, status, venue, category, account status, or text query filter unless that constraint is explicitly supported by the current user request. Business date context is for resolving user-supplied relative date phrases only; it is not a default event filter.
 ============================================
 `;
   let contextSection = "";

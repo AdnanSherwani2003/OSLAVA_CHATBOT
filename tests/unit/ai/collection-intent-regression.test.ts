@@ -1003,4 +1003,374 @@ describe("Collection Intent Regression: ToolLoop Runtime", () => {
       expect(result.finalContent).toContain("Worker History");
     });
   });
+
+  // ==========================================================================
+  // §9: SEARCH ARGUMENT POLICY & PRODUCTION REGRESSIONS
+  // ==========================================================================
+  describe("§9: Search Argument Policy & Production Regressions", () => {
+    const mockEventsList = [
+      {
+        id: testEventId,
+        title: "VM hall function",
+        event_type: "Dinner Party",
+        venue_name: "VM Hall",
+        event_date: "2026-09-20",
+        event_status: "PUBLISHED",
+        recruitment_status: "OPEN",
+        reporting_at: "2026-09-20T17:00:00Z",
+      },
+      {
+        id: "dddddddd-dddd-dddd-dddd-dddddddddddd",
+        title: "Arbaz Wedding",
+        event_type: "Wedding",
+        venue_name: "Royal Palace",
+        event_date: "2026-09-22",
+        event_status: "PUBLISHED",
+        recruitment_status: "OPEN",
+        reporting_at: "2026-09-22T10:00:00Z",
+      },
+    ];
+
+    it("production regression: 'show me the events' with model proposing query='events' -> sanitized to {} and returns all events", async () => {
+      const prompt = "show me the events";
+      const plan = turnPlanner.planTurn(prompt, emptyState);
+
+      mockGateway.getAdminEvents.mockResolvedValue(mockEventsList);
+
+      let modelStep = 0;
+      const mockModel: ModelProvider = {
+        chat: vi.fn().mockImplementation(async () => {
+          modelStep++;
+          if (modelStep === 1) {
+            // Model erroneously proposes query: "events"
+            return {
+              content: null,
+              toolCalls: [
+                {
+                  id: "c-show-events",
+                  type: "function",
+                  function: {
+                    name: "search_events",
+                    arguments: JSON.stringify({ query: "events" }),
+                  },
+                },
+              ],
+              model: "gpt-4o-mini",
+            };
+          }
+          return {
+            content: "### Event Search Results\n1. VM hall function\n2. Arbaz Wedding",
+            toolCalls: [],
+            model: "gpt-4o-mini",
+          };
+        }),
+      };
+
+      const loop = new ToolLoop(8);
+      const result = await loop.run({
+        modelProvider: mockModel,
+        messages: [{ role: "user", content: prompt }],
+        state: emptyState,
+        userPrompt: prompt,
+        gateway: mockGateway,
+        actor: mockActor,
+        requestId: "req-show-events-sanitized",
+        sessionId: emptyState.sessionId,
+        traceRepo: traceRepository,
+        turnPlan: plan,
+      });
+
+      expect(mockGateway.getAdminEvents).toHaveBeenCalledTimes(1);
+      expect(result.finalContent).toContain("VM hall function");
+      expect(result.finalContent).toContain("Arbaz Wedding");
+    });
+
+    it("production regression: 'tell me about the events' with model proposing invented today date -> sanitized to {} and returns all events", async () => {
+      const prompt = "tell me about the events";
+      const plan = turnPlanner.planTurn(prompt, emptyState);
+
+      mockGateway.getAdminEvents.mockResolvedValue(mockEventsList);
+
+      let modelStep = 0;
+      const mockModel: ModelProvider = {
+        chat: vi.fn().mockImplementation(async () => {
+          modelStep++;
+          if (modelStep === 1) {
+            // Model erroneously proposes today's date from system prompt
+            return {
+              content: null,
+              toolCalls: [
+                {
+                  id: "c-tell-events",
+                  type: "function",
+                  function: {
+                    name: "search_events",
+                    arguments: JSON.stringify({ start_date: "2026-09-16", end_date: "2026-09-16" }),
+                  },
+                },
+              ],
+              model: "gpt-4o-mini",
+            };
+          }
+          return {
+            content: "### Event Search Results\n1. VM hall function\n2. Arbaz Wedding",
+            toolCalls: [],
+            model: "gpt-4o-mini",
+          };
+        }),
+      };
+
+      const loop = new ToolLoop(8);
+      const result = await loop.run({
+        modelProvider: mockModel,
+        messages: [{ role: "user", content: prompt }],
+        state: emptyState,
+        userPrompt: prompt,
+        gateway: mockGateway,
+        actor: mockActor,
+        requestId: "req-tell-events-sanitized",
+        sessionId: emptyState.sessionId,
+        traceRepo: traceRepository,
+        turnPlan: plan,
+      });
+
+      expect(mockGateway.getAdminEvents).toHaveBeenCalledTimes(1);
+      expect(result.finalContent).toContain("VM hall function");
+      expect(result.finalContent).toContain("Arbaz Wedding");
+    });
+
+    it("explicit date: 'show me events today' -> date filter preserved and executed", async () => {
+      const prompt = "show me events today";
+      const plan = turnPlanner.planTurn(prompt, emptyState);
+
+      mockGateway.getAdminEvents.mockResolvedValue(mockEventsList);
+
+      let modelStep = 0;
+      const mockModel: ModelProvider = {
+        chat: vi.fn().mockImplementation(async () => {
+          modelStep++;
+          if (modelStep === 1) {
+            return {
+              content: null,
+              toolCalls: [
+                {
+                  id: "c-events-today",
+                  type: "function",
+                  function: {
+                    name: "search_events",
+                    arguments: JSON.stringify({ start_date: "2026-09-16", end_date: "2026-09-16" }),
+                  },
+                },
+              ],
+              model: "gpt-4o-mini",
+            };
+          }
+          return {
+            content: "### Event Search Results\nNo events were found for today, September 16, 2026.",
+            toolCalls: [],
+            model: "gpt-4o-mini",
+          };
+        }),
+      };
+
+      const loop = new ToolLoop(8);
+      const result = await loop.run({
+        modelProvider: mockModel,
+        messages: [{ role: "user", content: prompt }],
+        state: emptyState,
+        userPrompt: prompt,
+        gateway: mockGateway,
+        actor: mockActor,
+        requestId: "req-events-today",
+        sessionId: emptyState.sessionId,
+        traceRepo: traceRepository,
+        turnPlan: plan,
+      });
+
+      expect(mockGateway.getAdminEvents).toHaveBeenCalledTimes(1);
+      expect(result.finalContent).toContain("No events were found for today");
+    });
+
+    it("worker collection: 'list workers' with model proposing query='workers' -> sanitized to {} and executes search", async () => {
+      const prompt = "list workers";
+      const plan = turnPlanner.planTurn(prompt, emptyState);
+
+      mockGateway.searchWorkers.mockResolvedValue([
+        { id: testWorkerId, full_name: "Adnan Adnan", category: "A", status: "ACTIVE" },
+      ]);
+
+      let modelStep = 0;
+      const mockModel: ModelProvider = {
+        chat: vi.fn().mockImplementation(async () => {
+          modelStep++;
+          if (modelStep === 1) {
+            return {
+              content: null,
+              toolCalls: [
+                {
+                  id: "c-list-w",
+                  type: "function",
+                  function: {
+                    name: "search_workers",
+                    arguments: JSON.stringify({ query: "workers" }),
+                  },
+                },
+              ],
+              model: "gpt-4o-mini",
+            };
+          }
+          return {
+            content: "### Worker Search Results\n1. Adnan Adnan (Category A)",
+            toolCalls: [],
+            model: "gpt-4o-mini",
+          };
+        }),
+      };
+
+      const loop = new ToolLoop(8);
+      const result = await loop.run({
+        modelProvider: mockModel,
+        messages: [{ role: "user", content: prompt }],
+        state: emptyState,
+        userPrompt: prompt,
+        gateway: mockGateway,
+        actor: mockActor,
+        requestId: "req-list-workers-sanitized",
+        sessionId: emptyState.sessionId,
+        traceRepo: traceRepository,
+        turnPlan: plan,
+      });
+
+      expect(mockGateway.searchWorkers).toHaveBeenCalledWith({
+        query: undefined,
+        category: undefined,
+        account_status: undefined,
+        limit: 10,
+        offset: 0,
+      });
+      expect(result.finalContent).toContain("Adnan Adnan");
+    });
+
+    it("negation regression: 'show all events, not just today' removes today date filter and returns all events", async () => {
+      const prompt = "show all events, not just today";
+      const plan = turnPlanner.planTurn(prompt, emptyState);
+
+      mockGateway.getAdminEvents.mockResolvedValue(mockEventsList);
+
+      let modelStep = 0;
+      const mockModel: ModelProvider = {
+        chat: vi.fn().mockImplementation(async () => {
+          modelStep++;
+          if (modelStep === 1) {
+            // Model erroneously proposes today date based on literal 'today' in prompt
+            return {
+              content: null,
+              toolCalls: [
+                {
+                  id: "c-not-today",
+                  type: "function",
+                  function: {
+                    name: "search_events",
+                    arguments: JSON.stringify({ start_date: "2026-09-16", end_date: "2026-09-16" }),
+                  },
+                },
+              ],
+              model: "gpt-4o-mini",
+            };
+          }
+          return {
+            content: "### Event Search Results\n1. VM hall function\n2. Arbaz Wedding",
+            toolCalls: [],
+            model: "gpt-4o-mini",
+          };
+        }),
+      };
+
+      const loop = new ToolLoop(8);
+      const result = await loop.run({
+        modelProvider: mockModel,
+        messages: [{ role: "user", content: prompt }],
+        state: emptyState,
+        userPrompt: prompt,
+        gateway: mockGateway,
+        actor: mockActor,
+        requestId: "req-negation-today",
+        sessionId: emptyState.sessionId,
+        traceRepo: traceRepository,
+        turnPlan: plan,
+      });
+
+      expect(mockGateway.getAdminEvents).toHaveBeenCalledTimes(1);
+      expect(result.finalContent).toContain("VM hall function");
+      expect(result.finalContent).toContain("Arbaz Wedding");
+    });
+
+    it("combination filter: 'show published events at VM hall today' retains status, venue, and date", async () => {
+      const prompt = "show published events at VM hall today";
+      const plan = turnPlanner.planTurn(prompt, emptyState);
+
+      mockGateway.getAdminEvents.mockResolvedValue([
+        {
+          id: testEventId,
+          title: "VM hall function",
+          event_type: "Dinner Party",
+          venue_name: "VM Hall",
+          event_date: "2026-09-16",
+          event_status: "PUBLISHED",
+          recruitment_status: "OPEN",
+          reporting_at: "2026-09-16T17:00:00Z",
+        },
+      ]);
+
+      let modelStep = 0;
+      const mockModel: ModelProvider = {
+        chat: vi.fn().mockImplementation(async () => {
+          modelStep++;
+          if (modelStep === 1) {
+            return {
+              content: null,
+              toolCalls: [
+                {
+                  id: "c-multi-filter",
+                  type: "function",
+                  function: {
+                    name: "search_events",
+                    arguments: JSON.stringify({
+                      event_status: "PUBLISHED",
+                      venue: "VM hall",
+                      start_date: "2026-09-16",
+                      end_date: "2026-09-16",
+                    }),
+                  },
+                },
+              ],
+              model: "gpt-4o-mini",
+            };
+          }
+          return {
+            content: "### Event Search Results\n1. VM hall function (Published, VM Hall)",
+            toolCalls: [],
+            model: "gpt-4o-mini",
+          };
+        }),
+      };
+
+      const loop = new ToolLoop(8);
+      const result = await loop.run({
+        modelProvider: mockModel,
+        messages: [{ role: "user", content: prompt }],
+        state: emptyState,
+        userPrompt: prompt,
+        gateway: mockGateway,
+        actor: mockActor,
+        requestId: "req-multi-filter",
+        sessionId: emptyState.sessionId,
+        traceRepo: traceRepository,
+        turnPlan: plan,
+      });
+
+      expect(mockGateway.getAdminEvents).toHaveBeenCalledTimes(1);
+      expect(result.finalContent).toContain("VM hall function");
+    });
+  });
 });

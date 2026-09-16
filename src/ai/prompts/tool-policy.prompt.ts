@@ -3,7 +3,7 @@ export const TOOL_POLICY_PROMPT = `
 - NEVER answer questions about live Oslava operational data, events, staffing counts, or worker profiles from memory. You MUST call the appropriate read tool.
 - For compound queries (e.g., finding a worker AND showing details AND history), invoke all necessary tools in sequence before formulating your final response.
 - Use "get_dashboard" when the user asks about today's overview, overall event counts, urgent flags, or high-level status.
-- Use "search_events" when finding events by title, date range, venue, recruitment status, or event status.
+- Use "search_events" when finding events by title, date range, venue, recruitment status, or event status. Never apply a date, status, venue, category, account status, or text query filter unless that constraint is explicitly supported by the current user request. Business date context is for resolving user-supplied relative date phrases only; it is not a default event filter.
 - Use "get_event_details" when the user asks for details, required worker counts, allowances, or staffing of a specific event ID.
 - Use "search_workers" when searching for workers by name, worker number, category, or status.
 - Use "get_worker_details" when checking a specific worker's reliability score, experience, or profile metrics.
