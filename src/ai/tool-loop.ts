@@ -15,7 +15,13 @@ import {
 import { toolRegistry } from "./tool-registry.js";
 import { PendingActionRecord } from "../actions/action.types.js";
 import { WriteIntentResult } from "../tools/tool.types.js";
-import { TurnPlan, turnPlanner } from "./turn-planner.js";
+import {
+  TurnPlan,
+  turnPlanner,
+  buildSynthesisInstruction,
+  buildResynthesisInstruction,
+  validateResponseCoverage,
+} from "./turn-planner.js";
 import { type V1ToolName } from "./v1-manifest.js";
 
 export interface ToolLoopExecutionParams {
@@ -115,6 +121,187 @@ export class ToolLoop {
     }
     const hasTools = toolDefinitions.length > 0;
 
+    const checkAndSynthesizeResponse = async (
+      initialDraft?: string,
+    ): Promise<ToolLoopResult> => {
+      let candidateDraft = initialDraft;
+      let resynthesisAttempts = 0;
+      const maxResynthesisAttempts = 1;
+
+      // If no initial draft was provided, run the dedicated final synthesis phase with toolChoice = "none" (Requirement 2)
+      if (!candidateDraft) {
+        if (turnPlan?.requiredResponseObjectives && turnPlan.requiredResponseObjectives.length > 0) {
+          messages.push({
+            role: "user",
+            content: buildSynthesisInstruction(turnPlan.requiredResponseObjectives),
+          });
+        }
+
+        const remainingMs = turnDeadline ? turnDeadline - Date.now() : config.CHAT_TURN_TIMEOUT_MS;
+        if (remainingMs < 2000) {
+          metrics.recordChatTurnTimeout();
+          throw new ModelTimeoutError(`Chat turn deadline exceeded (${Math.max(0, remainingMs)}ms remaining).`);
+        }
+
+        const synthCallStart = Date.now();
+        const synthResp = await modelProvider.chat({
+          messages,
+          toolChoice: "none",
+          timeoutMs: Math.min(config.OPENAI_TIMEOUT_MS, Math.max(1000, remainingMs)),
+        });
+        metrics.recordModelCall(Date.now() - synthCallStart);
+
+        candidateDraft = synthResp.content || "";
+        lastModel = synthResp.model || lastModel;
+        if (synthResp.provider) providersUsed.add(synthResp.provider);
+        if (synthResp.fallbackUsed) fallbackOccurred = true;
+        if (synthResp.usage) {
+          totalPromptTokens += synthResp.usage.promptTokens || 0;
+          totalCompletionTokens += synthResp.usage.completionTokens || 0;
+        }
+      }
+
+      // If no required response objectives (e.g. conversational / confirmation), accept draft directly
+      if (!turnPlan?.requiredResponseObjectives || turnPlan.requiredResponseObjectives.length === 0) {
+        logger.info(
+          {
+            requestId,
+            sessionId,
+            plannedObjectives: turnPlan?.objectives || [],
+            requiredTools: turnPlan?.requiredReadTools || [],
+            allowedTools: turnPlan?.allowedTools || [],
+            executedTools: executedToolNames,
+            rejectedOutOfPlanTools,
+          },
+          "[ToolLoop] Turn execution complete (no response objectives required)",
+        );
+
+        return {
+          finalContent: candidateDraft || "",
+          state: currentState,
+          toolCallCount,
+          totalTokens: totalPromptTokens + totalCompletionTokens,
+          inputTokens: totalPromptTokens,
+          outputTokens: totalCompletionTokens,
+          model: lastModel,
+          provider: resolveProvider(),
+          fallbackUsed: fallbackOccurred,
+        };
+      }
+
+      // Validate response coverage (Requirement 3)
+      let coverage = validateResponseCoverage(
+        turnPlan.requiredResponseObjectives,
+        candidateDraft || "",
+      );
+
+      // If coverage is incomplete, allow exactly 1 bounded resynthesis attempt (Requirement 4 & 5)
+      if (!coverage.isCovered && resynthesisAttempts < maxResynthesisAttempts) {
+        resynthesisAttempts++;
+        metrics.recordResponseCoverageRecovery();
+        logger.warn(
+          {
+            requestId,
+            sessionId,
+            requiredResponseObjectives: turnPlan.requiredResponseObjectives,
+            coveredResponseObjectives: coverage.coveredObjectives,
+            missingResponseObjectives: coverage.missingObjectives,
+            responseResynthesisAttempts: resynthesisAttempts,
+          },
+          "[ToolLoop] Response coverage incomplete; attempting bounded resynthesis",
+        );
+
+        messages.push({
+          role: "assistant",
+          content: candidateDraft || null,
+        });
+        messages.push({
+          role: "user",
+          content: buildResynthesisInstruction(
+            turnPlan.requiredResponseObjectives,
+            coverage.missingObjectives,
+          ),
+        });
+
+        const remainingMs = turnDeadline ? turnDeadline - Date.now() : config.CHAT_TURN_TIMEOUT_MS;
+        if (remainingMs < 2000) {
+          metrics.recordChatTurnTimeout();
+          throw new ModelTimeoutError(`Chat turn deadline exceeded (${Math.max(0, remainingMs)}ms remaining).`);
+        }
+
+        const retryCallStart = Date.now();
+        const retryResp = await modelProvider.chat({
+          messages,
+          toolChoice: "none",
+          timeoutMs: Math.min(config.OPENAI_TIMEOUT_MS, Math.max(1000, remainingMs)),
+        });
+        metrics.recordModelCall(Date.now() - retryCallStart);
+
+        candidateDraft = retryResp.content || "";
+        lastModel = retryResp.model || lastModel;
+        if (retryResp.provider) providersUsed.add(retryResp.provider);
+        if (retryResp.fallbackUsed) fallbackOccurred = true;
+        if (retryResp.usage) {
+          totalPromptTokens += retryResp.usage.promptTokens || 0;
+          totalCompletionTokens += retryResp.usage.completionTokens || 0;
+        }
+
+        coverage = validateResponseCoverage(
+          turnPlan.requiredResponseObjectives,
+          candidateDraft || "",
+        );
+      }
+
+      // If STILL incomplete after retry: FAIL CLOSED (Requirement 4 & 9)
+      if (!coverage.isCovered) {
+        metrics.recordResponseCoverageFailure();
+        logger.error(
+          {
+            requestId,
+            sessionId,
+            requiredResponseObjectives: turnPlan.requiredResponseObjectives,
+            coveredResponseObjectives: coverage.coveredObjectives,
+            missingResponseObjectives: coverage.missingObjectives,
+            responseResynthesisAttempts: resynthesisAttempts,
+          },
+          "[ToolLoop] Response coverage incomplete after bounded resynthesis; failing closed",
+        );
+        throw new ModelInvalidResponseError(
+          `AI model response omitted required user-facing objectives: ${coverage.missingObjectives.join(", ")}.`,
+        );
+      }
+
+      // Complete! Log safe structured turn summary (Requirement 13)
+      logger.info(
+        {
+          requestId,
+          sessionId,
+          plannedObjectives: turnPlan.objectives,
+          requiredTools: turnPlan.requiredReadTools,
+          allowedTools: turnPlan.allowedTools,
+          executedTools: executedToolNames,
+          rejectedOutOfPlanTools,
+          requiredResponseObjectives: turnPlan.requiredResponseObjectives,
+          coveredResponseObjectives: coverage.coveredObjectives,
+          missingResponseObjectives: coverage.missingObjectives,
+          responseResynthesisAttempts: resynthesisAttempts,
+        },
+        "[ToolLoop] Turn execution complete",
+      );
+
+      return {
+        finalContent: candidateDraft || "",
+        state: currentState,
+        toolCallCount,
+        totalTokens: totalPromptTokens + totalCompletionTokens,
+        inputTokens: totalPromptTokens,
+        outputTokens: totalCompletionTokens,
+        model: lastModel,
+        provider: resolveProvider(),
+        fallbackUsed: fallbackOccurred,
+      };
+    };
+
     while (toolCallCount < maxToolCalls) {
       // Bounded turn deadline check before model call
       const remainingTurnMs = turnDeadline ? turnDeadline - Date.now() : config.CHAT_TURN_TIMEOUT_MS;
@@ -207,31 +394,7 @@ export class ToolLoop {
           }
         }
 
-        // Complete! Log safe structured turn summary (Requirement 15)
-        logger.info(
-          {
-            requestId,
-            sessionId,
-            plannedObjectives: turnPlan?.objectives || [],
-            requiredTools: turnPlan?.requiredReadTools || [],
-            allowedTools: turnPlan?.allowedTools || [],
-            executedTools: executedToolNames,
-            rejectedOutOfPlanTools,
-          },
-          "[ToolLoop] Turn execution complete",
-        );
-
-        return {
-          finalContent: response.content || "",
-          state: currentState,
-          toolCallCount,
-          totalTokens: totalPromptTokens + totalCompletionTokens,
-          inputTokens: totalPromptTokens,
-          outputTokens: totalCompletionTokens,
-          model: lastModel,
-          provider: resolveProvider(),
-          fallbackUsed: fallbackOccurred,
-        };
+        return await checkAndSynthesizeResponse(response.content || "");
       }
 
       // Append assistant tool-call message
@@ -562,6 +725,22 @@ export class ToolLoop {
           content: JSON.stringify(toolOutput),
         });
       }
+
+      // Dedicated Final Synthesis Trigger (Requirement 2):
+      // If all required read tools have executed, run dedicated final synthesis phase with toolChoice = "none"
+      const allRequiredReadToolsExecuted = Boolean(
+        turnPlan &&
+          turnPlan.requiredReadTools.length > 0 &&
+          turnPlan.requiredReadTools.every((t) => executedToolNames.includes(t)),
+      );
+
+      if (
+        allRequiredReadToolsExecuted &&
+        turnPlan?.requiredResponseObjectives &&
+        turnPlan.requiredResponseObjectives.length > 0
+      ) {
+        return await checkAndSynthesizeResponse();
+      }
     }
 
     // Force final response if max tool calls reached
@@ -591,51 +770,7 @@ export class ToolLoop {
       }
     }
 
-    const remainingFinalMs = turnDeadline ? turnDeadline - Date.now() : config.CHAT_TURN_TIMEOUT_MS;
-    const finalResp = await modelProvider.chat({
-      messages,
-      toolChoice: "none",
-      timeoutMs: Math.min(config.OPENAI_TIMEOUT_MS, Math.max(1000, remainingFinalMs)),
-    });
-
-    if (finalResp.provider) {
-      providersUsed.add(finalResp.provider);
-    }
-    if (finalResp.fallbackUsed) {
-      fallbackOccurred = true;
-    }
-
-    if (finalResp.usage) {
-      totalPromptTokens += finalResp.usage.promptTokens || 0;
-      totalCompletionTokens += finalResp.usage.completionTokens || 0;
-    }
-
-    logger.info(
-      {
-        requestId,
-        sessionId,
-        plannedObjectives: turnPlan?.objectives || [],
-        requiredTools: turnPlan?.requiredReadTools || [],
-        allowedTools: turnPlan?.allowedTools || [],
-        executedTools: executedToolNames,
-        rejectedOutOfPlanTools,
-      },
-      "[ToolLoop] Turn execution complete (at max tool limit)",
-    );
-
-    return {
-      finalContent:
-        finalResp.content ||
-        "I've completed my analysis with the available information.",
-      state: currentState,
-      toolCallCount,
-      totalTokens: totalPromptTokens + totalCompletionTokens,
-      inputTokens: totalPromptTokens,
-      outputTokens: totalCompletionTokens,
-      model: finalResp.model || lastModel,
-      provider: resolveProvider(),
-      fallbackUsed: fallbackOccurred,
-    };
+    return await checkAndSynthesizeResponse();
   }
 }
 

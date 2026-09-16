@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { turnPlanner } from "../../../src/ai/turn-planner.js";
+import {
+  turnPlanner,
+  deriveResponseObjectives,
+  validateResponseCoverage,
+  buildSynthesisInstruction,
+  buildResynthesisInstruction,
+} from "../../../src/ai/turn-planner.js";
 import { SessionState } from "../../../src/context/context.types.js";
 
 describe("TurnPlanner: Capability & Intent Planning", () => {
@@ -328,5 +334,134 @@ describe("TurnPlanner: Capability & Intent Planning", () => {
     expect(plan.allowedTools).not.toContain("search_workers");
     expect(plan.allowedTools).not.toContain("get_worker_details");
     expect(plan.allowedTools).not.toContain("get_worker_history");
+  });
+
+  describe("Response Coverage Plan Derivation (Requirement 1)", () => {
+    it("derives response objectives for compound worker query, excluding prerequisite search_workers", () => {
+      const plan = turnPlanner.planTurn("Find worker Adnan Adnan and show his details and history.", emptyState);
+      expect(plan.objectives).toEqual(["SEARCH_WORKERS", "WORKER_DETAILS", "WORKER_HISTORY"]);
+      expect(plan.requiredReadTools).toEqual(["search_workers", "get_worker_details", "get_worker_history"]);
+      expect(plan.requiredResponseObjectives).toEqual(["WORKER_DETAILS", "WORKER_HISTORY"]);
+      expect(plan.requiredResponseObjectives).not.toContain("SEARCH_WORKERS");
+    });
+
+    it("derives response objectives for compound event query, excluding prerequisite search_events", () => {
+      const plan = turnPlanner.planTurn("Find VM hall function, tell me its details, and give me its event report.", emptyState);
+      expect(plan.objectives).toContain("SEARCH_EVENTS");
+      expect(plan.objectives).toContain("EVENT_DETAILS");
+      expect(plan.objectives).toContain("EVENT_REPORT");
+      expect(plan.requiredResponseObjectives).toEqual(["EVENT_DETAILS", "EVENT_REPORT"]);
+      expect(plan.requiredResponseObjectives).not.toContain("SEARCH_EVENTS");
+    });
+
+    it("derives response objective for terminal search when search is user's final request", () => {
+      const plan = turnPlanner.planTurn("Find events tomorrow.", emptyState);
+      expect(plan.requiredResponseObjectives).toEqual(["SEARCH_EVENTS"]);
+
+      const workerPlan = turnPlanner.planTurn("Find worker Arif.", emptyState);
+      expect(workerPlan.requiredResponseObjectives).toEqual(["SEARCH_WORKERS"]);
+    });
+
+    it("derives response objective for grounded worker history", () => {
+      const groundedState: SessionState = {
+        ...emptyState,
+        currentWorkerId: "12345678-1234-1234-1234-123456789abc",
+        currentWorkerLabel: "Adnan Adnan",
+      };
+      const plan = turnPlanner.planTurn("Show his history.", groundedState);
+      expect(plan.requiredResponseObjectives).toEqual(["WORKER_HISTORY"]);
+      expect(plan.requiredResponseObjectives).not.toContain("WORKER_DETAILS");
+    });
+
+    it("derives response objectives for multi-domain query", () => {
+      const plan = turnPlanner.planTurn("Show VM Hall details and worker Arif history.", emptyState);
+      expect(plan.requiredResponseObjectives).toContain("EVENT_DETAILS");
+      expect(plan.requiredResponseObjectives).toContain("WORKER_HISTORY");
+      expect(plan.requiredResponseObjectives).not.toContain("SEARCH_EVENTS");
+      expect(plan.requiredResponseObjectives).not.toContain("SEARCH_WORKERS");
+    });
+
+    it("returns empty response objectives for unsupported intents, confirmations, and greetings", () => {
+      const unsupported = turnPlanner.planTurn("Cancel the event scheduled for tonight", emptyState);
+      expect(unsupported.requiredResponseObjectives).toEqual([]);
+
+      const confirm = turnPlanner.planTurn("confirm the action", emptyState);
+      expect(confirm.requiredResponseObjectives).toEqual([]);
+
+      const greeting = turnPlanner.planTurn("Hello, good morning!", emptyState);
+      expect(greeting.requiredResponseObjectives).toEqual([]);
+    });
+  });
+
+  describe("Deterministic Response Coverage Validation (Requirement 3)", () => {
+    it("validates multi-objective response with canonical headings", () => {
+      const content = `
+### Worker Details
+- Name: Adnan Adnan
+- Role: Lead Staff
+- Category: A
+
+### Worker History
+- Completed 15 events
+- Reliability Score: 100%
+      `;
+      const result = validateResponseCoverage(["WORKER_DETAILS", "WORKER_HISTORY"], content);
+      expect(result.isCovered).toBe(true);
+      expect(result.coveredObjectives).toEqual(["WORKER_DETAILS", "WORKER_HISTORY"]);
+      expect(result.missingObjectives).toEqual([]);
+    });
+
+    it("detects missing Worker History when response covers only Worker Details", () => {
+      const content = `
+### Worker Details
+- Name: Adnan Adnan
+- Role: Lead Staff
+- Category: A
+      `;
+      const result = validateResponseCoverage(["WORKER_DETAILS", "WORKER_HISTORY"], content);
+      expect(result.isCovered).toBe(false);
+      expect(result.coveredObjectives).toEqual(["WORKER_DETAILS"]);
+      expect(result.missingObjectives).toEqual(["WORKER_HISTORY"]);
+    });
+
+    it("accepts single-objective history without requiring unnecessary sections", () => {
+      const content = "### Worker History\nAdnan has completed 12 events with 0 absences.";
+      const result = validateResponseCoverage(["WORKER_HISTORY"], content);
+      expect(result.isCovered).toBe(true);
+      expect(result.coveredObjectives).toEqual(["WORKER_HISTORY"]);
+      expect(result.missingObjectives).toEqual([]);
+    });
+
+    it("accepts empty history records when explicitly stated under canonical heading (Requirement 6)", () => {
+      const content = `
+### Worker Details
+- Name: Adnan Adnan
+- Status: ACTIVE
+
+### Worker History
+No worker history records were found.
+      `;
+      const result = validateResponseCoverage(["WORKER_DETAILS", "WORKER_HISTORY"], content);
+      expect(result.isCovered).toBe(true);
+      expect(result.coveredObjectives).toEqual(["WORKER_DETAILS", "WORKER_HISTORY"]);
+      expect(result.missingObjectives).toEqual([]);
+    });
+
+    it("builds correct synthesis and resynthesis instructions without exposing internal enum names", () => {
+      const synth = buildSynthesisInstruction(["WORKER_DETAILS", "WORKER_HISTORY"]);
+      expect(synth).toContain("Worker Details");
+      expect(synth).toContain("Worker History");
+      expect(synth).toContain("### Worker Details");
+      expect(synth).toContain("### Worker History");
+      expect(synth).not.toContain("WORKER_DETAILS");
+      expect(synth).not.toContain("WORKER_HISTORY");
+
+      const retry = buildResynthesisInstruction(["WORKER_DETAILS", "WORKER_HISTORY"], ["WORKER_HISTORY"]);
+      expect(retry).toContain("Worker History");
+      expect(retry).toContain("### Worker Details");
+      expect(retry).toContain("### Worker History");
+      expect(retry).not.toContain("WORKER_DETAILS");
+      expect(retry).not.toContain("WORKER_HISTORY");
+    });
   });
 });

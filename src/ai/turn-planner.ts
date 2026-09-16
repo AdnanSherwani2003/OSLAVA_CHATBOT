@@ -19,10 +19,20 @@ export type CapabilityObjective =
   | "CONFIRMATION_GUIDANCE"
   | "CONVERSATIONAL";
 
+export type ResponseObjective =
+  | "DASHBOARD"
+  | "SEARCH_EVENTS"
+  | "EVENT_DETAILS"
+  | "EVENT_REPORT"
+  | "SEARCH_WORKERS"
+  | "WORKER_DETAILS"
+  | "WORKER_HISTORY";
+
 export interface TurnPlan {
   readonly objectives: CapabilityObjective[];
   readonly requiredReadTools: V1ReadToolName[];
   readonly allowedTools: V1ToolName[];
+  readonly requiredResponseObjectives: ResponseObjective[];
   readonly isUnsupported: boolean;
   readonly isWriteIntent: boolean;
   readonly isConfirmation: boolean;
@@ -61,8 +71,8 @@ export class TurnPlanner {
       /\bassign\b.*\bto\b/i,
       /\bremove\s+(worker|leader|staff)\b/i,
       /\bcreate\s+(new\s+)?event\b/i,
-      /\bedit\s+event\b/i,
-      /\bcancel\s+event\b/i,
+      /\bedit\s+(the\s+)?event\b/i,
+      /\bcancel\s+(the\s+)?event\b/i,
       /\bdelete\b/i,
       /\b(open|close|modify|adjust)\s+recruitment\b/i,
       /\b(register|approve|reject)\s+worker\b/i,
@@ -76,6 +86,7 @@ export class TurnPlanner {
         objectives,
         requiredReadTools: [],
         allowedTools: [],
+        requiredResponseObjectives: [],
         isUnsupported: true,
         isWriteIntent: false,
         isConfirmation: false,
@@ -97,6 +108,7 @@ export class TurnPlanner {
         objectives,
         requiredReadTools: [],
         allowedTools: [],
+        requiredResponseObjectives: [],
         isUnsupported: false,
         isWriteIntent: false,
         isConfirmation: true,
@@ -213,6 +225,7 @@ export class TurnPlanner {
             objectives,
             requiredReadTools: [],
             allowedTools: [],
+            requiredResponseObjectives: [],
             isUnsupported: false,
             isWriteIntent: false,
             isConfirmation: false,
@@ -235,17 +248,86 @@ export class TurnPlanner {
       }
     }
 
+    // In multi-domain queries (both event and worker domains present), resolve actions per domain
+    // to prevent cross-domain contamination (e.g. event details contaminating worker with details).
+    let eventHasDetails = hasDetailsAction;
+    let eventHasReport = hasReportAction;
+    let workerHasDetails = hasDetailsAction;
+    let workerHasHistory = hasHistoryAction;
+
+    if (hasEventDomain && hasWorkerDomain) {
+      const clauses = text
+        .split(/\b(?:and|also|plus|with|\&)\b|[,;]/i)
+        .map((c) => c.trim())
+        .filter(Boolean);
+
+      let specificEventDetails = false;
+      let specificEventReport = false;
+      let specificWorkerDetails = false;
+      let specificWorkerHistory = false;
+      let hasDomainSpecificClause = false;
+
+      const eventAnchorRegex =
+        /\b(event|events|hall(\s+function)?|functions?|wedding|ceremony|banquet|convention|reception|gathering|shifts?)\b/i;
+      const workerAnchorRegex =
+        /\b(workers?|staff|staffing|employees?|crew|contractors?|personnel|[a-z0-9-]+'s)\b/i;
+
+      for (const clause of clauses) {
+        const cHasEvent =
+          eventAnchorRegex.test(clause) ||
+          Boolean(
+            state?.currentEventLabel &&
+              clause.includes(state.currentEventLabel.toLowerCase()),
+          );
+        const cHasWorker =
+          workerAnchorRegex.test(clause) ||
+          Boolean(
+            state?.currentWorkerLabel &&
+              clause.includes(state.currentWorkerLabel.toLowerCase()),
+          );
+
+        const cDetails =
+          /\b(details?|profile|reliability|score|allowance|tell me about)\b/i.test(
+            clause,
+          );
+        const cReport =
+          /\b(report|summary\s+report|post-event|attendance\s+report)\b/i.test(
+            clause,
+          );
+        const cHistory =
+          /\b(history|track\s+record|past\s+assignments|audit)\b/i.test(clause);
+
+        if (cHasEvent && !cHasWorker) {
+          hasDomainSpecificClause = true;
+          if (cDetails) specificEventDetails = true;
+          if (cReport) specificEventReport = true;
+        } else if (cHasWorker && !cHasEvent) {
+          hasDomainSpecificClause = true;
+          if (cDetails) specificWorkerDetails = true;
+          if (cHistory) specificWorkerHistory = true;
+        }
+      }
+
+      if (hasDomainSpecificClause) {
+        eventHasDetails = specificEventDetails;
+        eventHasReport = specificEventReport;
+        workerHasDetails = specificWorkerDetails;
+        workerHasHistory = specificWorkerHistory;
+      }
+    }
+
     // 7. Assign Event Capabilities (if hasEventDomain)
     if (hasEventDomain) {
-      if (hasDetailsAction) {
+      const isEventOrdinal = hasOrdinalSelection && Boolean(state?.recentEventResults?.length);
+      if (eventHasDetails || isEventOrdinal) {
         objectives.push("EVENT_DETAILS");
-        if (!eventGrounded && !requiredReadTools.includes("search_events")) {
+        if (!eventGrounded && !requiredReadTools.includes("search_events") && !isEventOrdinal) {
           requiredReadTools.push("search_events");
         }
         requiredReadTools.push("get_event_details");
       }
 
-      if (hasReportAction) {
+      if (eventHasReport) {
         objectives.push("EVENT_REPORT");
         if (!eventGrounded && !requiredReadTools.includes("search_events")) {
           requiredReadTools.push("search_events");
@@ -255,7 +337,11 @@ export class TurnPlanner {
 
       // If search explicitly requested or ungrounded event query without details/report
       const explicitSearch = /\b(find|search|lookup|look up|list|upcoming)\b/i.test(text);
-      if ((explicitSearch || (!hasReportAction && !hasDetailsAction && !isWriteIntent)) && !eventGrounded) {
+      if (
+        (explicitSearch || (!eventHasReport && !eventHasDetails && !isWriteIntent)) &&
+        !eventGrounded &&
+        !isEventOrdinal
+      ) {
         if (!objectives.includes("SEARCH_EVENTS")) {
           objectives.unshift("SEARCH_EVENTS");
         }
@@ -267,15 +353,16 @@ export class TurnPlanner {
 
     // 8. Assign Worker Capabilities (if hasWorkerDomain)
     if (hasWorkerDomain) {
-      if (hasDetailsAction) {
+      const isWorkerOrdinal = hasOrdinalSelection && Boolean(state?.recentWorkerResults?.length);
+      if (workerHasDetails || isWorkerOrdinal) {
         objectives.push("WORKER_DETAILS");
-        if (!workerGrounded && !requiredReadTools.includes("search_workers")) {
+        if (!workerGrounded && !requiredReadTools.includes("search_workers") && !isWorkerOrdinal) {
           requiredReadTools.push("search_workers");
         }
         requiredReadTools.push("get_worker_details");
       }
 
-      if (hasHistoryAction) {
+      if (workerHasHistory) {
         objectives.push("WORKER_HISTORY");
         if (!workerGrounded && !requiredReadTools.includes("search_workers")) {
           requiredReadTools.push("search_workers");
@@ -284,7 +371,11 @@ export class TurnPlanner {
       }
 
       const explicitSearch = /\b(find|search|lookup|look up|get|list|show)\b/i.test(text);
-      if ((explicitSearch || (!hasHistoryAction && !hasDetailsAction && !isWriteIntent)) && !workerGrounded) {
+      if (
+        (explicitSearch || (!workerHasHistory && !workerHasDetails && !isWriteIntent)) &&
+        !workerGrounded &&
+        !isWorkerOrdinal
+      ) {
         if (!objectives.includes("SEARCH_WORKERS")) {
           objectives.unshift("SEARCH_WORKERS");
         }
@@ -394,14 +485,24 @@ export class TurnPlanner {
       allowedTools.push(...Array.from(allowedSet));
     }
 
+    const conversationalActive = isConversational && !isUnsupported && !isConfirmation;
+    const requiredResponseObjectives = deriveResponseObjectives(
+      objectives,
+      isWriteIntent,
+      isUnsupported,
+      isConfirmation,
+      conversationalActive,
+    );
+
     return {
       objectives,
       requiredReadTools,
       allowedTools,
+      requiredResponseObjectives,
       isUnsupported,
       isWriteIntent,
       isConfirmation,
-      isConversational: isConversational && !isUnsupported && !isConfirmation,
+      isConversational: conversationalActive,
       workerGrounded,
       eventGrounded,
       writeIntentTool,
@@ -549,6 +650,340 @@ export class TurnPlanner {
 
     return { isComplete: true };
   }
+}
+
+export const OBJECTIVE_DISPLAY_NAMES: Record<
+  ResponseObjective,
+  { title: string; heading: string }
+> = {
+  WORKER_DETAILS: {
+    title: "Worker Details",
+    heading: "### Worker Details",
+  },
+  WORKER_HISTORY: {
+    title: "Worker History",
+    heading: "### Worker History",
+  },
+  EVENT_DETAILS: {
+    title: "Event Details",
+    heading: "### Event Details",
+  },
+  EVENT_REPORT: {
+    title: "Event Report",
+    heading: "### Event Report",
+  },
+  DASHBOARD: {
+    title: "Operational Overview",
+    heading: "### Operational Overview",
+  },
+  SEARCH_WORKERS: {
+    title: "Worker Search Results",
+    heading: "### Worker Search Results",
+  },
+  SEARCH_EVENTS: {
+    title: "Event Search Results",
+    heading: "### Event Search Results",
+  },
+};
+
+/**
+ * Derives deterministic user-facing response requirements from TurnPlan objectives.
+ * Search objectives are treated as prerequisite retrieval steps and omitted from
+ * final response requirements when a specific details/history/report objective was targeted.
+ */
+export function deriveResponseObjectives(
+  objectives: CapabilityObjective[],
+  isWriteIntent: boolean,
+  isUnsupported: boolean,
+  isConfirmation: boolean,
+  isConversational: boolean,
+): ResponseObjective[] {
+  if (isWriteIntent || isUnsupported || isConfirmation || isConversational) {
+    return [];
+  }
+
+  const responseObjs: ResponseObjective[] = [];
+
+  // Dashboard
+  if (objectives.includes("DASHBOARD")) {
+    responseObjs.push("DASHBOARD");
+  }
+
+  // Event Domain
+  const hasEventDetails = objectives.includes("EVENT_DETAILS");
+  const hasEventReport = objectives.includes("EVENT_REPORT");
+  const hasEventSearch = objectives.includes("SEARCH_EVENTS");
+
+  if (hasEventDetails) {
+    responseObjs.push("EVENT_DETAILS");
+  }
+  if (hasEventReport) {
+    responseObjs.push("EVENT_REPORT");
+  }
+  // Search events is terminal only if neither details nor report were requested
+  if (hasEventSearch && !hasEventDetails && !hasEventReport) {
+    responseObjs.push("SEARCH_EVENTS");
+  }
+
+  // Worker Domain
+  const hasWorkerDetails = objectives.includes("WORKER_DETAILS");
+  const hasWorkerHistory = objectives.includes("WORKER_HISTORY");
+  const hasWorkerSearch = objectives.includes("SEARCH_WORKERS");
+
+  if (hasWorkerDetails) {
+    responseObjs.push("WORKER_DETAILS");
+  }
+  if (hasWorkerHistory) {
+    responseObjs.push("WORKER_HISTORY");
+  }
+  // Search workers is terminal only if neither details nor history were requested
+  if (hasWorkerSearch && !hasWorkerDetails && !hasWorkerHistory) {
+    responseObjs.push("SEARCH_WORKERS");
+  }
+
+  return responseObjs;
+}
+
+export interface ResponseCoverageResult {
+  readonly isCovered: boolean;
+  readonly coveredObjectives: ResponseObjective[];
+  readonly missingObjectives: ResponseObjective[];
+}
+
+/**
+ * Validates whether all required user-facing response objectives are covered
+ * in the final synthesized prose.
+ */
+export function validateResponseCoverage(
+  requiredObjectives: ResponseObjective[],
+  content: string,
+): ResponseCoverageResult {
+  if (!requiredObjectives || requiredObjectives.length === 0) {
+    return {
+      isCovered: true,
+      coveredObjectives: [],
+      missingObjectives: [],
+    };
+  }
+
+  // 1. Valid refusal detection: If model provided the standardized unsupported refusal verbatim, accept it
+  if (content.includes("That action isn't available through the chatbot yet")) {
+    return {
+      isCovered: true,
+      coveredObjectives: [...requiredObjectives],
+      missingObjectives: [],
+    };
+  }
+
+  // 2. Gateway / Tool Error Reporting or Validation: If model is reporting a gateway/retrieval failure or invalid argument
+  if (
+    /\b(invalid|please specify|unable to|error|failed|issue|temporary issue|could not|service\s+is\s+currently\s+unavailable|try again shortly|connecting to the database)\b/i.test(
+      content,
+    )
+  ) {
+    return {
+      isCovered: true,
+      coveredObjectives: [...requiredObjectives],
+      missingObjectives: [],
+    };
+  }
+
+  const coveredObjectives: ResponseObjective[] = [];
+  const missingObjectives: ResponseObjective[] = [];
+  const isMulti = requiredObjectives.length > 1;
+
+  for (const obj of requiredObjectives) {
+    let covered = false;
+    switch (obj) {
+      case "WORKER_DETAILS": {
+        const headingRegex =
+          /(?:^|\n)\s*(?:(?:#+\s*|\*\*\s*)Worker (?:Details|Profile)\b|Worker (?:Details|Profile)\s*[:\-\n—])/i;
+        if (headingRegex.test(content)) {
+          covered = true;
+        } else if (
+          !isMulti &&
+          /\b(worker|name|category|tier|phone|status|reliability|score|worker\s+details|profile|details|staff|personnel)\b/i.test(
+            content,
+          )
+        ) {
+          covered = true;
+        }
+        break;
+      }
+
+      case "WORKER_HISTORY": {
+        const headingRegex =
+          /(?:^|\n)\s*(?:(?:#+\s*|\*\*\s*)(?:Worker\s+)?History\b|(?:Worker\s+)?History\s*[:\-\n—])/i;
+        if (headingRegex.test(content)) {
+          covered = true;
+        } else if (
+          !isMulti &&
+          /\b(history|shift|assignment|attended|absent|worked|no\s+.*history|history\s+record|track\s+record|actions?\s+in\s+history|log|records?|promoted|demoted|promotion|demotion|supervisor|category_change)\b/i.test(
+            content,
+          )
+        ) {
+          covered = true;
+        }
+        break;
+      }
+
+      case "EVENT_DETAILS": {
+        const headingRegex =
+          /(?:^|\n)\s*(?:(?:#+\s*|\*\*\s*)Event (?:Details|Information)\b|Event (?:Details|Information)\s*[:\-\n—])/i;
+        if (headingRegex.test(content)) {
+          covered = true;
+        } else if (
+          isMulti &&
+          /\b(scheduled\s+for|venue:|date:)/i.test(content) &&
+          /\b(details?|profile|event)\b/i.test(content)
+        ) {
+          covered = true;
+        } else if (
+          !isMulti &&
+          /\b(event|event\s+date|venue|status|reporting|scheduled|workers?|requires?|shifts?|details?|conference|hall|function)\b/i.test(
+            content,
+          )
+        ) {
+          covered = true;
+        }
+        break;
+      }
+
+      case "EVENT_REPORT": {
+        const headingRegex =
+          /(?:^|\n)\s*(?:(?:#+\s*|\*\*\s*)Event Report\b|Event Report\s*[:\-\n—])/i;
+        if (headingRegex.test(content)) {
+          covered = true;
+        } else if (isMulti && /\b(report\s+shows|event\s+report|staffing\s+report)\b/i.test(content)) {
+          covered = true;
+        } else if (
+          !isMulti &&
+          /\b(total_shifts|allocated|attended|staffing|event\s+report|report|report\s+shows|attended_workers)\b/i.test(
+            content,
+          )
+        ) {
+          covered = true;
+        }
+        break;
+      }
+
+      case "DASHBOARD": {
+        const headingRegex =
+          /(?:^|\n)\s*(?:(?:#+\s*|\*\*\s*)(?:Operational\s+Overview|Dashboard|Today'?s\s+Overview)\b|(?:Operational\s+Overview|Dashboard|Today'?s\s+Overview)\s*[:\-\n—])/i;
+        if (headingRegex.test(content)) {
+          covered = true;
+        } else if (
+          !isMulti &&
+          /\b(overview|today|dashboard|events?\s+scheduled|metrics|status|happening)\b/i.test(
+            content,
+          )
+        ) {
+          covered = true;
+        }
+        break;
+      }
+
+      case "SEARCH_WORKERS": {
+        const headingRegex =
+          /(?:^|\n)\s*(?:(?:#+\s*|\*\*\s*)(?:Worker\s+Search\s+Results|Workers?\s+Found|Search\s+Results)\b|(?:Worker\s+Search\s+Results|Workers?\s+Found|Search\s+Results)\s*[:\-\n—])/i;
+        if (headingRegex.test(content)) {
+          covered = true;
+        } else if (
+          !isMulti &&
+          /\b(worker|workers|found|matching|no\s+workers|workers?\s+found|here\s+are\s+the|search\s+results|found\s+two\s+workers|search_workers)\b/i.test(
+            content,
+          )
+        ) {
+          covered = true;
+        }
+        break;
+      }
+
+      case "SEARCH_EVENTS": {
+        const headingRegex =
+          /(?:^|\n)\s*(?:(?:#+\s*|\*\*\s*)(?:Event\s+Search\s+Results|Events?\s+Found|Upcoming\s+Events|Search\s+Results)\b|(?:Event\s+Search\s+Results|Events?\s+Found|Upcoming\s+Events|Search\s+Results)\s*[:\-\n—])/i;
+        if (headingRegex.test(content)) {
+          covered = true;
+        } else if (
+          !isMulti &&
+          /\b(event|events|found|upcoming|no\s+events|events?\s+found|here\s+are\s+the|search\s+results|search_events)\b/i.test(
+            content,
+          )
+        ) {
+          covered = true;
+        }
+        break;
+      }
+    }
+
+    if (covered) {
+      coveredObjectives.push(obj);
+    } else {
+      missingObjectives.push(obj);
+    }
+  }
+
+  return {
+    isCovered: missingObjectives.length === 0,
+    coveredObjectives,
+    missingObjectives,
+  };
+}
+
+/**
+ * Builds the internal system instruction for the dedicated final synthesis phase.
+ */
+export function buildSynthesisInstruction(
+  requiredObjectives: ResponseObjective[],
+): string {
+  const objectiveList = requiredObjectives
+    .map((obj, i) => `${i + 1}. ${OBJECTIVE_DISPLAY_NAMES[obj].title}`)
+    .join("\n");
+
+  const canonicalHeadings = requiredObjectives
+    .map((obj) => OBJECTIVE_DISPLAY_NAMES[obj].heading)
+    .join("\n");
+
+  return (
+    `[System: All required data has been retrieved. Provide your final answer now.\n` +
+    `Your final response MUST cover ALL of the following:\n${objectiveList}\n\n` +
+    `Format each section clearly using the following markdown headings:\n${canonicalHeadings}\n\n` +
+    `Use only the successful tool outputs already present in context.\n` +
+    `Do not omit any requested section.\n` +
+    `If a tool returned empty data (e.g. no history or no records), explicitly state that no records were found under that section.\n` +
+    `Do not call more tools.\n` +
+    `Do not invent missing data.]`
+  );
+}
+
+/**
+ * Builds the internal retry instruction for bounded resynthesis when response coverage is incomplete.
+ */
+export function buildResynthesisInstruction(
+  requiredObjectives: ResponseObjective[],
+  missingObjectives: ResponseObjective[],
+): string {
+  const missingTitles = missingObjectives
+    .map((obj) => OBJECTIVE_DISPLAY_NAMES[obj].title)
+    .join(", ");
+
+  const allList = requiredObjectives
+    .map((obj) => `- ${OBJECTIVE_DISPLAY_NAMES[obj].title}`)
+    .join("\n");
+
+  const canonicalHeadings = requiredObjectives
+    .map((obj) => OBJECTIVE_DISPLAY_NAMES[obj].heading)
+    .join("\n");
+
+  return (
+    `[System: The previous draft omitted ${missingTitles}.\n` +
+    `Rewrite the final response and include BOTH/ALL of the following:\n${allList}\n\n` +
+    `Format each section clearly using these canonical markdown headings:\n${canonicalHeadings}\n\n` +
+    `Use only existing verified tool outputs already present in context.\n` +
+    `If a section has no records (e.g. empty history), explicitly state that no records were found under that section.\n` +
+    `Do not call tools.\n` +
+    `Do not invent missing data.]`
+  );
 }
 
 export const turnPlanner = new TurnPlanner();

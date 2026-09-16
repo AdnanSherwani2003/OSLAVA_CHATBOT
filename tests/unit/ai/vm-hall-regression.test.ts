@@ -162,7 +162,8 @@ describe("VM Hall Production Regression & Context Pollution Protection", () => {
           };
         }
         return {
-          content: "VM hall function is scheduled for Sep 20. Report shows 15 workers assigned.",
+          content:
+            "### Event Details\nVM hall function is scheduled for Sep 20.\n\n### Event Report\nReport shows 15 workers assigned.",
           toolCalls: [],
           model: "gpt-4o-mini",
         };
@@ -287,7 +288,8 @@ describe("VM Hall Production Regression & Context Pollution Protection", () => {
           };
         }
         return {
-          content: "VM Hall Function report details.",
+          content:
+            "### Event Details\nVM hall function is scheduled for Sep 20.\n\n### Event Report\nVM Hall Function report details.",
           toolCalls: [],
           model: "gpt-4o-mini",
         };

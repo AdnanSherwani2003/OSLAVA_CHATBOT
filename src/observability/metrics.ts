@@ -27,6 +27,8 @@ export class MetricsRegistry {
   private toolCallsTotal = 0;
   private toolPlanRecoveryTotal = 0;
   private toolOmissionPreventedTotal = 0;
+  private responseCoverageRecoveryTotal = 0;
+  private responseCoverageFailureTotal = 0;
   private chatTurnTimeoutsTotal = 0;
   private toolTimeoutsTotal = 0;
   private toolInvocations = new Map<string, { count: number; success: number; failed: number; totalMs: number }>();
@@ -49,6 +51,8 @@ export class MetricsRegistry {
     this.toolCallsTotal = 0;
     this.toolPlanRecoveryTotal = 0;
     this.toolOmissionPreventedTotal = 0;
+    this.responseCoverageRecoveryTotal = 0;
+    this.responseCoverageFailureTotal = 0;
     this.chatTurnTimeoutsTotal = 0;
     this.toolTimeoutsTotal = 0;
     this.modelDurations = [];
@@ -118,6 +122,14 @@ export class MetricsRegistry {
 
   public recordToolOmissionPrevented(): void {
     this.toolOmissionPreventedTotal++;
+  }
+
+  public recordResponseCoverageRecovery(): void {
+    this.responseCoverageRecoveryTotal++;
+  }
+
+  public recordResponseCoverageFailure(): void {
+    this.responseCoverageFailureTotal++;
   }
 
   public recordChatTurnTimeout(): void {
@@ -209,6 +221,8 @@ export class MetricsRegistry {
         tool_calls_total: this.toolCallsTotal,
         tool_plan_recovery_total: this.toolPlanRecoveryTotal,
         tool_omission_prevented_total: this.toolOmissionPreventedTotal,
+        response_coverage_recovery_total: this.responseCoverageRecoveryTotal,
+        response_coverage_failure_total: this.responseCoverageFailureTotal,
         chat_turn_timeouts_total: this.chatTurnTimeoutsTotal,
         tool_timeouts_total: this.toolTimeoutsTotal,
         tools: toolStats,

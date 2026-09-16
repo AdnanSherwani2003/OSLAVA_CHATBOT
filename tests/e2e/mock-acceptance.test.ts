@@ -47,10 +47,17 @@ describe("E2E Acceptance: 13-Step Full Lifecycle Mock Acceptance Scenario", () =
         const userMsgs = options.messages.filter((m) => m.role === "user");
         const prompt = userMsgs[userMsgs.length - 1]?.content || "";
 
-        // If last message was a tool result, generate assistant summary
-        if (lastMsg.role === "tool") {
+        // If last message was a tool result or final synthesis was requested, generate assistant summary
+        if (lastMsg.role === "tool" || options.toolChoice === "none") {
+          const lastToolMsg = [...options.messages].reverse().find((m) => m.role === "tool");
+          const toolName = lastToolMsg?.name || "";
+          const header = toolName.includes("history")
+            ? "Worker History"
+            : toolName.includes("details")
+            ? "Details"
+            : "Results";
           return {
-            content: `Handled tool execution. Details: ${lastMsg.content.slice(0, 100)}...`,
+            content: `Handled ${toolName}. ${header}: ${lastToolMsg?.content?.slice(0, 100) || "Success"}...`,
             toolCalls: [],
             model: "openai/gpt-oss-120b",
           };
