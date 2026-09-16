@@ -39,6 +39,13 @@ export interface ToolLoopExecutionParams {
   turnDeadline?: number;
 }
 
+export interface TerminalResolution {
+  type: "NO_MATCH" | "AMBIGUOUS";
+  domain: "EVENT" | "WORKER";
+  count?: number;
+  query?: string;
+}
+
 export interface ToolLoopResult {
   finalContent: string;
   state: SessionState | null;
@@ -99,6 +106,9 @@ export class ToolLoop {
     const rejectedOutOfPlanTools: string[] = [];
     let omissionRecoveryAttempts = 0;
     const maxOmissionRecoveryAttempts = 2;
+    let forcedNextTool: string | null = null;
+    let lastSearchEventsResult: any[] | null = null;
+    let lastSearchWorkersResult: any[] | null = null;
 
     const resolveProvider = (): string => {
       if (fallbackOccurred || providersUsed.size > 1) {
@@ -123,10 +133,69 @@ export class ToolLoop {
 
     const checkAndSynthesizeResponse = async (
       initialDraft?: string,
+      terminalResolution?: TerminalResolution,
     ): Promise<ToolLoopResult> => {
       let candidateDraft = initialDraft;
       let resynthesisAttempts = 0;
       const maxResynthesisAttempts = 1;
+
+      // Handle terminal entity resolution (0 matches or multiple ambiguous matches) (Refinement A)
+      if (terminalResolution) {
+        let resolutionInstruction = "";
+        if (terminalResolution.type === "NO_MATCH") {
+          resolutionInstruction =
+            `[System: The search returned 0 matching ${terminalResolution.domain.toLowerCase()}s. ` +
+            `Inform the user clearly and politely that no matching ${terminalResolution.domain.toLowerCase()}s were found. ` +
+            `Do not invent any data, IDs, or details.]`;
+        } else {
+          resolutionInstruction =
+            `[System: The search returned ${terminalResolution.count} matching ${terminalResolution.domain.toLowerCase()}s. ` +
+            `Present the matching ${terminalResolution.domain.toLowerCase()}s from the search results to the user ` +
+            `and politely ask them to specify or select which one they would like details for. ` +
+            `Do not guess an entity and do not call more tools.]`;
+        }
+
+        messages.push({
+          role: "user",
+          content: resolutionInstruction,
+        });
+
+        const remainingMs = turnDeadline ? turnDeadline - Date.now() : config.CHAT_TURN_TIMEOUT_MS;
+        if (remainingMs < 2000) {
+          metrics.recordChatTurnTimeout();
+          throw new ModelTimeoutError(`Chat turn deadline exceeded (${Math.max(0, remainingMs)}ms remaining).`);
+        }
+
+        const synthCallStart = Date.now();
+        const synthResp = await modelProvider.chat({
+          messages,
+          toolChoice: "none",
+          timeoutMs: Math.min(config.OPENAI_TIMEOUT_MS, Math.max(1000, remainingMs)),
+        });
+        metrics.recordModelCall(Date.now() - synthCallStart);
+
+        logger.info(
+          {
+            requestId,
+            sessionId,
+            terminalResolution,
+            executedTools: executedToolNames,
+          },
+          "[ToolLoop] Terminal entity resolution complete (dependent objectives cleanly bypassed)",
+        );
+
+        return {
+          finalContent: synthResp.content || "",
+          state: currentState,
+          toolCallCount,
+          totalTokens: totalPromptTokens + (synthResp.usage?.totalTokens || 0),
+          inputTokens: totalPromptTokens,
+          outputTokens: totalCompletionTokens,
+          model: synthResp.model || lastModel,
+          provider: synthResp.provider || resolveProvider(),
+          fallbackUsed: fallbackOccurred || Boolean(synthResp.fallbackUsed),
+        };
+      }
 
       // If no initial draft was provided, run the dedicated final synthesis phase with toolChoice = "none" (Requirement 2)
       if (!candidateDraft) {
@@ -316,11 +385,36 @@ export class ToolLoop {
 
       const modelTimeoutMs = Math.min(config.OPENAI_TIMEOUT_MS, remainingTurnMs);
 
+      // Refinement D: Remove successfully completed prerequisite searches from active tool definitions
+      let activeToolDefs = hasTools ? toolDefinitions : undefined;
+      if (activeToolDefs) {
+        activeToolDefs = activeToolDefs.filter((td) => {
+          const name = td.function.name;
+          if (name === "search_events" && executedToolNames.includes("search_events")) {
+            return false;
+          }
+          if (name === "search_workers" && executedToolNames.includes("search_workers")) {
+            return false;
+          }
+          return true;
+        });
+      }
+
+      let toolChoiceOption: any = undefined;
+      if (activeToolDefs && activeToolDefs.length > 0) {
+        if (forcedNextTool && activeToolDefs.some((td) => td.function.name === forcedNextTool)) {
+          toolChoiceOption = { type: "function", function: { name: forcedNextTool } };
+        } else {
+          toolChoiceOption = "auto";
+        }
+      }
+      forcedNextTool = null;
+
       const modelCallStart = Date.now();
       const response = await modelProvider.chat({
         messages,
-        tools: hasTools ? toolDefinitions : undefined,
-        toolChoice: hasTools ? "auto" : undefined,
+        tools: activeToolDefs?.length ? activeToolDefs : undefined,
+        toolChoice: toolChoiceOption,
         timeoutMs: modelTimeoutMs,
       });
       metrics.recordModelCall(Date.now() - modelCallStart);
@@ -360,6 +454,19 @@ export class ToolLoop {
                 },
                 "[ToolLoop] Intercepted premature response with missing tool objective; re-prompting model",
               );
+
+              // Refinement D: If target entity is safely grounded and missing dependent tool is known, force it
+              if (
+                (completeness.missingTool === "get_event_details" || completeness.missingTool === "get_event_report") &&
+                currentState?.currentEventId
+              ) {
+                forcedNextTool = completeness.missingTool;
+              } else if (
+                (completeness.missingTool === "get_worker_details" || completeness.missingTool === "get_worker_history") &&
+                currentState?.currentWorkerId
+              ) {
+                forcedNextTool = completeness.missingTool;
+              }
 
               // Append assistant draft and deterministic reminder
               messages.push({
@@ -671,6 +778,12 @@ export class ToolLoop {
               result.data,
             );
             turnToolOutputs.push(result.data);
+
+            if (toolName === "search_events") {
+              lastSearchEventsResult = Array.isArray(result.data) ? result.data : [];
+            } else if (toolName === "search_workers") {
+              lastSearchWorkersResult = Array.isArray(result.data) ? result.data : [];
+            }
           }
         } catch (err: any) {
           executionStatus = "ERROR";
@@ -724,6 +837,65 @@ export class ToolLoop {
           name: toolName,
           content: JSON.stringify(toolOutput),
         });
+      }
+
+      // Refinement A & D: Inspect prerequisite search outcomes for dependent entity chains
+      const needsEventDetails =
+        turnPlan &&
+        (turnPlan.objectives.includes("EVENT_DETAILS") ||
+          turnPlan.objectives.includes("EVENT_REPORT"));
+
+      if (needsEventDetails && lastSearchEventsResult !== null) {
+        const searchItems = lastSearchEventsResult;
+        lastSearchEventsResult = null; // consume
+        if (searchItems.length === 0) {
+          return await checkAndSynthesizeResponse("", {
+            type: "NO_MATCH",
+            domain: "EVENT",
+            query: userPrompt,
+          });
+        } else if (searchItems.length > 1 && !currentState?.currentEventId) {
+          return await checkAndSynthesizeResponse("", {
+            type: "AMBIGUOUS",
+            domain: "EVENT",
+            count: searchItems.length,
+          });
+        } else if (searchItems.length === 1 || currentState?.currentEventId) {
+          forcedNextTool = turnPlan.objectives.includes("EVENT_DETAILS") && !executedToolNames.includes("get_event_details")
+            ? "get_event_details"
+            : (turnPlan.objectives.includes("EVENT_REPORT") && !executedToolNames.includes("get_event_report")
+              ? "get_event_report"
+              : null);
+        }
+      }
+
+      const needsWorkerDetails =
+        turnPlan &&
+        (turnPlan.objectives.includes("WORKER_DETAILS") ||
+          turnPlan.objectives.includes("WORKER_HISTORY"));
+
+      if (needsWorkerDetails && lastSearchWorkersResult !== null) {
+        const searchItems = lastSearchWorkersResult;
+        lastSearchWorkersResult = null; // consume
+        if (searchItems.length === 0) {
+          return await checkAndSynthesizeResponse("", {
+            type: "NO_MATCH",
+            domain: "WORKER",
+            query: userPrompt,
+          });
+        } else if (searchItems.length > 1 && !currentState?.currentWorkerId) {
+          return await checkAndSynthesizeResponse("", {
+            type: "AMBIGUOUS",
+            domain: "WORKER",
+            count: searchItems.length,
+          });
+        } else if (searchItems.length === 1 || currentState?.currentWorkerId) {
+          forcedNextTool = turnPlan.objectives.includes("WORKER_DETAILS") && !executedToolNames.includes("get_worker_details")
+            ? "get_worker_details"
+            : (turnPlan.objectives.includes("WORKER_HISTORY") && !executedToolNames.includes("get_worker_history")
+              ? "get_worker_history"
+              : null);
+        }
       }
 
       // Dedicated Final Synthesis Trigger (Requirement 2):

@@ -72,7 +72,7 @@ describe("TurnPlanner: Capability & Intent Planning", () => {
 
   it("Scenario 6: 'Tell me about VM Hall event.' -> search_events when unresolved then get_event_details", () => {
     const plan = turnPlanner.planTurn("Tell me about VM Hall event.", emptyState);
-    expect(plan.objectives).toEqual(["EVENT_DETAILS"]);
+    expect(plan.objectives).toEqual(["SEARCH_EVENTS", "EVENT_DETAILS"]);
     expect(plan.requiredReadTools).toEqual(["search_events", "get_event_details"]);
     expect(plan.objectives).not.toContain("SEARCH_WORKERS");
     expect(plan.objectives).not.toContain("WORKER_DETAILS");
@@ -81,7 +81,7 @@ describe("TurnPlanner: Capability & Intent Planning", () => {
 
   it("Scenario 7: 'Give me VM Hall's event report.' -> search_events when unresolved then get_event_report", () => {
     const plan = turnPlanner.planTurn("Give me VM Hall's event report.", emptyState);
-    expect(plan.objectives).toEqual(["EVENT_REPORT"]);
+    expect(plan.objectives).toEqual(["SEARCH_EVENTS", "EVENT_REPORT"]);
     expect(plan.requiredReadTools).toEqual(["search_events", "get_event_report"]);
     expect(plan.objectives).not.toContain("SEARCH_WORKERS");
     expect(plan.objectives).not.toContain("WORKER_HISTORY");
@@ -217,7 +217,7 @@ describe("TurnPlanner: Capability & Intent Planning", () => {
 
   it("Case C: 'Tell me details about VM hall event.' -> event tools only", () => {
     const plan = turnPlanner.planTurn("Tell me details about VM hall event.", emptyState);
-    expect(plan.objectives).toEqual(["EVENT_DETAILS"]);
+    expect(plan.objectives).toEqual(["SEARCH_EVENTS", "EVENT_DETAILS"]);
     expect(plan.requiredReadTools).toEqual(["search_events", "get_event_details"]);
     expect(plan.allowedTools).not.toContain("publish_event");
     expect(plan.allowedTools).not.toContain("search_workers");
@@ -462,6 +462,114 @@ No worker history records were found.
       expect(retry).toContain("### Worker History");
       expect(retry).not.toContain("WORKER_DETAILS");
       expect(retry).not.toContain("WORKER_HISTORY");
+    });
+  });
+
+  describe("Collection Intent vs Specific Entity Intent (Production Regression Fix)", () => {
+    it("plans 'tell me about the events' strictly as SEARCH_EVENTS without get_event_details", () => {
+      const plan = turnPlanner.planTurn("tell me about the events", emptyState);
+      expect(plan.objectives).toEqual(["SEARCH_EVENTS"]);
+      expect(plan.requiredReadTools).toEqual(["search_events"]);
+      expect(plan.allowedTools).toEqual(["search_events"]);
+      expect(plan.requiredResponseObjectives).toEqual(["SEARCH_EVENTS"]);
+      expect(plan.requiredReadTools).not.toContain("get_event_details");
+    });
+
+    it("plural event collection query wins over active event in state", () => {
+      const stateWithEvent: SessionState = {
+        ...emptyState,
+        currentEventId: "550e8400-e29b-41d4-a716-446655440000",
+        currentEventLabel: "VM hall function",
+      };
+      const plan = turnPlanner.planTurn("tell me about the events", stateWithEvent);
+      expect(plan.objectives).toEqual(["SEARCH_EVENTS"]);
+      expect(plan.requiredReadTools).toEqual(["search_events"]);
+      expect(plan.allowedTools).toEqual(["search_events"]);
+      expect(plan.requiredResponseObjectives).toEqual(["SEARCH_EVENTS"]);
+      expect(plan.requiredReadTools).not.toContain("get_event_details");
+    });
+
+    it("plans event collection variants strictly as SEARCH_EVENTS", () => {
+      const variants = [
+        "show me the events",
+        "show events",
+        "list events",
+        "what events are there?",
+        "what upcoming events are there?",
+      ];
+      for (const variant of variants) {
+        const plan = turnPlanner.planTurn(variant, emptyState);
+        expect(plan.objectives).toContain("SEARCH_EVENTS");
+        expect(plan.requiredReadTools).toEqual(["search_events"]);
+        expect(plan.requiredResponseObjectives).toEqual(["SEARCH_EVENTS"]);
+        expect(plan.requiredReadTools).not.toContain("get_event_details");
+      }
+    });
+
+    it("plans 'tell me about the workers' strictly as SEARCH_WORKERS without get_worker_details", () => {
+      const plan = turnPlanner.planTurn("tell me about the workers", emptyState);
+      expect(plan.objectives).toEqual(["SEARCH_WORKERS"]);
+      expect(plan.requiredReadTools).toEqual(["search_workers"]);
+      expect(plan.allowedTools).toEqual(["search_workers"]);
+      expect(plan.requiredResponseObjectives).toEqual(["SEARCH_WORKERS"]);
+      expect(plan.requiredReadTools).not.toContain("get_worker_details");
+    });
+
+    it("plural worker collection query wins over active worker in state", () => {
+      const stateWithWorker: SessionState = {
+        ...emptyState,
+        currentWorkerId: "660e8400-e29b-41d4-a716-446655440000",
+        currentWorkerLabel: "Adnan Adnan",
+      };
+      const plan = turnPlanner.planTurn("tell me about the workers", stateWithWorker);
+      expect(plan.objectives).toEqual(["SEARCH_WORKERS"]);
+      expect(plan.requiredReadTools).toEqual(["search_workers"]);
+      expect(plan.allowedTools).toEqual(["search_workers"]);
+      expect(plan.requiredResponseObjectives).toEqual(["SEARCH_WORKERS"]);
+      expect(plan.requiredReadTools).not.toContain("get_worker_details");
+    });
+
+    it("plans worker collection variants strictly as SEARCH_WORKERS", () => {
+      const variants = [
+        "tell me about workers",
+        "show workers",
+        "list the workers",
+        "list workers",
+      ];
+      for (const variant of variants) {
+        const plan = turnPlanner.planTurn(variant, emptyState);
+        expect(plan.objectives).toContain("SEARCH_WORKERS");
+        expect(plan.requiredReadTools).toEqual(["search_workers"]);
+        expect(plan.requiredResponseObjectives).toEqual(["SEARCH_WORKERS"]);
+        expect(plan.requiredReadTools).not.toContain("get_worker_details");
+      }
+    });
+
+    it("plans specific event query 'tell me about VM hall function' with SEARCH_EVENTS and EVENT_DETAILS", () => {
+      const plan = turnPlanner.planTurn("tell me about VM hall function", emptyState);
+      expect(plan.objectives).toContain("SEARCH_EVENTS");
+      expect(plan.objectives).toContain("EVENT_DETAILS");
+      expect(plan.requiredReadTools).toContain("search_events");
+      expect(plan.requiredReadTools).toContain("get_event_details");
+      expect(plan.requiredResponseObjectives).toEqual(["EVENT_DETAILS"]);
+    });
+
+    it("plans specific worker query 'tell me about the worker Adnan Adnan' with SEARCH_WORKERS and WORKER_DETAILS", () => {
+      const plan = turnPlanner.planTurn("tell me about the worker Adnan Adnan", emptyState);
+      expect(plan.objectives).toContain("SEARCH_WORKERS");
+      expect(plan.objectives).toContain("WORKER_DETAILS");
+      expect(plan.requiredReadTools).toContain("search_workers");
+      expect(plan.requiredReadTools).toContain("get_worker_details");
+      expect(plan.requiredResponseObjectives).toEqual(["WORKER_DETAILS"]);
+    });
+
+    it("does not assume worker domain for 'tell me about Alex' without entity/domain anchor", () => {
+      const plan = turnPlanner.planTurn("tell me about Alex", emptyState);
+      expect(plan.requiredReadTools).toEqual([]);
+      expect(plan.allowedTools).toEqual([]);
+      expect(plan.objectives).not.toContain("WORKER_DETAILS");
+      expect(plan.objectives).not.toContain("SEARCH_WORKERS");
+      expect(plan.isConversational).toBe(true);
     });
   });
 });

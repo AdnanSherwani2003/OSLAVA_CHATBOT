@@ -139,13 +139,39 @@ export class TurnPlanner {
     else if (isCompleteEventWrite) writeIntentTool = "complete_event";
     else if (isCloseEventWrite) writeIntentTool = "close_event";
 
-    // 4. Grounding Check from active state
-    const workerGrounded = Boolean(
-      state?.currentWorkerId || (hasExplicitUuid && /\bworker\b/i.test(text)),
-    );
-    const eventGrounded = Boolean(
-      state?.currentEventId || (hasExplicitUuid && (/\bevent\b/i.test(text) || /\bhall\b/i.test(text))),
-    );
+    // 4. Conversational Prefix & Plural Collection Detection (Requirement 1, 2, B)
+    const conversationalPrefixRegex =
+      /^(?:please\s+)?(?:can\s+you\s+)?(?:tell\s+me\s+about|what\s+about|what\s+can\s+you\s+tell\s+me\s+about|info\s+(?:on|about)|information\s+(?:on|about)|details\s+(?:on|for|about))\s+/i;
+    const hasConversationalPrefix = conversationalPrefixRegex.test(text);
+    const targetAfterPrefix = hasConversationalPrefix
+      ? text.replace(conversationalPrefixRegex, "").trim().replace(/[?.!]+$/, "").trim()
+      : "";
+
+    // Plural collection queries (Requirement 1 & 2):
+    const isPluralEventCollection =
+      (hasConversationalPrefix &&
+        /^(?:the\s+)?(?:upcoming\s+)?(?:scheduled\s+)?(?:active\s+)?events$/i.test(targetAfterPrefix)) ||
+      /^(?:please\s+)?(?:can\s+you\s+)?(?:list|show(?:\s+me)?|find|search|display|get)\s+(?:the\s+)?(?:upcoming\s+)?(?:scheduled\s+)?(?:active\s+)?events\b/i.test(text) ||
+      /\b(?:what|which)\s+(?:upcoming\s+)?events\s+(?:are\s+there|exist|do\s+we\s+have)\b/i.test(text) ||
+      /\b(?:all|upcoming|scheduled)\s+events\b/i.test(text);
+
+    const isPluralWorkerCollection =
+      (hasConversationalPrefix &&
+        /^(?:the\s+)?(?:all\s+)?(?:active\s+)?(?:available\s+)?(?:workers|staff|personnel|crew|employees)$/i.test(targetAfterPrefix)) ||
+      /^(?:please\s+)?(?:can\s+you\s+)?(?:list|show(?:\s+me)?|find|search|display|get)\s+(?:the\s+)?(?:all\s+)?(?:active\s+)?(?:available\s+)?(?:workers|staff|personnel|crew|employees)\b/i.test(text) ||
+      /\b(?:what|which)\s+(?:workers|staff|personnel|crew|employees)\s+(?:are\s+there|exist|do\s+we\s+have)\b/i.test(text) ||
+      /\b(?:all|active|available)\s+(?:workers|staff|personnel|crew|employees)\b/i.test(text);
+
+    // Grounding Check from active state (Requirement 2: Plural collection queries MUST win over active context!)
+    const workerGrounded =
+      !isPluralWorkerCollection &&
+      Boolean(state?.currentWorkerId || (hasExplicitUuid && /\bworker\b/i.test(text)));
+    const eventGrounded =
+      !isPluralEventCollection &&
+      Boolean(
+        state?.currentEventId ||
+          (hasExplicitUuid && (/\bevent\b/i.test(text) || /\bhall\b/i.test(text))),
+      );
 
     // 5. Entity Domain & Anchor Detection (Requirement 1, 2, 3, 4, 10)
     // Explicit Event Anchors in prompt:
@@ -172,12 +198,43 @@ export class TurnPlanner {
     // Specific Action Indicators:
     const hasReportAction = /\b(report|summary\s+report|post-event|attendance\s+report)\b/i.test(text);
     const hasHistoryAction = /\b(history|track\s+record|past\s+assignments|audit)\b/i.test(text);
-    const hasDetailsAction = /\b(details?|profile|reliability|score|allowance|tell me about)\b/i.test(text);
+    const hasExplicitDetailsWord = /\b(details?|profile|reliability|score|allowance)\b/i.test(text);
     const hasSearchVerbs = /\b(find|search|lookup|look up|get|list|show|upcoming)\b/i.test(text);
     const hasOrdinalSelection = /\b(first|second|third|1st|2nd|3rd|select)\b/i.test(text);
 
     // Check for possessive proper nouns (e.g. "Arif's details" vs "VM Hall's details"):
     const hasPossessiveNoun = /\b([a-z0-9-]+)'s\b/i.test(text);
+
+    // Specific entity target parsing after conversational prefix (Requirement B):
+    const eventResidual = hasConversationalPrefix
+      ? targetAfterPrefix.replace(/\b(the|a|an|all|upcoming|scheduled|active|events?|functions?|halls?)\b/gi, "").trim()
+      : "";
+    const workerResidual = hasConversationalPrefix
+      ? targetAfterPrefix.replace(/\b(the|a|an|all|active|available|workers?|staff|employees?|personnel|crew)\b/gi, "").trim()
+      : "";
+
+    const hasSpecificEventTarget =
+      !isPluralEventCollection &&
+      (hasExplicitDetailsWord ||
+        (hasConversationalPrefix &&
+          (hasNeuterPronoun ||
+            /\b(?:hall|function|wedding|ceremony|banquet|convention|reception|gathering|shifts?)\b/i.test(targetAfterPrefix) ||
+            Boolean(state?.currentEventLabel && text.includes(state.currentEventLabel.toLowerCase())) ||
+            (hasExplicitEventAnchor && eventResidual.length > 0))));
+
+    const hasSpecificWorkerTarget =
+      !isPluralWorkerCollection &&
+      (hasExplicitDetailsWord ||
+        (hasConversationalPrefix &&
+          (hasPersonPronoun ||
+            /\bworker\s+(?:number\s+|#\s*)?[a-z0-9-]+\b/i.test(text) ||
+            hasPossessiveNoun ||
+            Boolean(state?.currentWorkerLabel && text.includes(state.currentWorkerLabel.toLowerCase())) ||
+            (hasExplicitWorkerAnchor && workerResidual.length > 0))));
+
+    const hasDetailsAction =
+      hasExplicitDetailsWord ||
+      (hasConversationalPrefix && (hasSpecificEventTarget || hasSpecificWorkerTarget));
 
     // Dashboard query detection:
     const isDashboardOnly =
@@ -287,9 +344,7 @@ export class TurnPlanner {
           );
 
         const cDetails =
-          /\b(details?|profile|reliability|score|allowance|tell me about)\b/i.test(
-            clause,
-          );
+          /\b(details?|profile|reliability|score|allowance)\b/i.test(clause);
         const cReport =
           /\b(report|summary\s+report|post-event|attendance\s+report)\b/i.test(
             clause,
@@ -321,16 +376,26 @@ export class TurnPlanner {
       const isEventOrdinal = hasOrdinalSelection && Boolean(state?.recentEventResults?.length);
       if (eventHasDetails || isEventOrdinal) {
         objectives.push("EVENT_DETAILS");
-        if (!eventGrounded && !requiredReadTools.includes("search_events") && !isEventOrdinal) {
-          requiredReadTools.push("search_events");
+        if (!eventGrounded && !isEventOrdinal) {
+          if (!objectives.includes("SEARCH_EVENTS")) {
+            objectives.unshift("SEARCH_EVENTS");
+          }
+          if (!requiredReadTools.includes("search_events")) {
+            requiredReadTools.push("search_events");
+          }
         }
         requiredReadTools.push("get_event_details");
       }
 
       if (eventHasReport) {
         objectives.push("EVENT_REPORT");
-        if (!eventGrounded && !requiredReadTools.includes("search_events")) {
-          requiredReadTools.push("search_events");
+        if (!eventGrounded) {
+          if (!objectives.includes("SEARCH_EVENTS")) {
+            objectives.unshift("SEARCH_EVENTS");
+          }
+          if (!requiredReadTools.includes("search_events")) {
+            requiredReadTools.push("search_events");
+          }
         }
         requiredReadTools.push("get_event_report");
       }
@@ -356,16 +421,26 @@ export class TurnPlanner {
       const isWorkerOrdinal = hasOrdinalSelection && Boolean(state?.recentWorkerResults?.length);
       if (workerHasDetails || isWorkerOrdinal) {
         objectives.push("WORKER_DETAILS");
-        if (!workerGrounded && !requiredReadTools.includes("search_workers") && !isWorkerOrdinal) {
-          requiredReadTools.push("search_workers");
+        if (!workerGrounded && !isWorkerOrdinal) {
+          if (!objectives.includes("SEARCH_WORKERS")) {
+            objectives.unshift("SEARCH_WORKERS");
+          }
+          if (!requiredReadTools.includes("search_workers")) {
+            requiredReadTools.push("search_workers");
+          }
         }
         requiredReadTools.push("get_worker_details");
       }
 
       if (workerHasHistory) {
         objectives.push("WORKER_HISTORY");
-        if (!workerGrounded && !requiredReadTools.includes("search_workers")) {
-          requiredReadTools.push("search_workers");
+        if (!workerGrounded) {
+          if (!objectives.includes("SEARCH_WORKERS")) {
+            objectives.unshift("SEARCH_WORKERS");
+          }
+          if (!requiredReadTools.includes("search_workers")) {
+            requiredReadTools.push("search_workers");
+          }
         }
         requiredReadTools.push("get_worker_history");
       }
@@ -458,7 +533,11 @@ export class TurnPlanner {
         for (const t of requiredReadTools) {
           allowedSet.add(t);
         }
-        if (hasEventDomain && !hasWorkerDomain) {
+        if (isPluralEventCollection) {
+          allowedSet.add("search_events");
+        } else if (isPluralWorkerCollection) {
+          allowedSet.add("search_workers");
+        } else if (hasEventDomain && !hasWorkerDomain) {
           allowedSet.add("search_events");
           allowedSet.add("get_event_details");
           allowedSet.add("get_event_report");

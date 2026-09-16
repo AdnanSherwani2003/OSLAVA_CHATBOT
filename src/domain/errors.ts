@@ -179,6 +179,17 @@ export class ModelInvalidResponseError extends AppError {
   constructor(message = "AI model returned an unexpected or invalid response.") {
     super(message);
   }
+
+  public override toResponse(requestId: string): ApiErrorPayload {
+    return {
+      error: {
+        code: this.code,
+        message: "The AI assistant couldn't complete that request. Please try again or be more specific.",
+        retryable: this.retryable,
+        request_id: requestId,
+      },
+    };
+  }
 }
 
 export class ToolLimitExceededError extends AppError {
